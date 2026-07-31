@@ -4,3 +4,4 @@ screenshots
 dist
 *.log
 fileinstalls.ahk
+**/__pycache__/*.pyc
