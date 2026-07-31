@@ -1,0 +1,761 @@
+{
+  "variation": 48,
+  "templates": [
+    {
+      "bait": "berrybait",
+      "kind": "normal",
+      "file": "bait_berrybait.png",
+      "masked_frac": 0.131
+    },
+    {
+      "bait": "berrybait",
+      "kind": "selected",
+      "file": "bait_berrybait_b.png",
+      "masked_frac": 0.128
+    },
+    {
+      "bait": "berrybait",
+      "kind": "selected",
+      "file": "bait_berrybait_c.png",
+      "masked_frac": 0.136
+    },
+    {
+      "bait": "berrybait",
+      "kind": "selected",
+      "file": "bait_berrybait_sel.png",
+      "masked_frac": 0.134
+    },
+    {
+      "bait": "emberglowbait",
+      "kind": "normal",
+      "file": "bait_emberglowbait.png",
+      "masked_frac": 0.261
+    },
+    {
+      "bait": "emberglowbait",
+      "kind": "selected",
+      "file": "bait_emberglowbait_b.png",
+      "masked_frac": 0.258
+    },
+    {
+      "bait": "emberglowbait",
+      "kind": "selected",
+      "file": "bait_emberglowbait_c.png",
+      "masked_frac": 0.269
+    },
+    {
+      "bait": "emberglowbait",
+      "kind": "selected",
+      "file": "bait_emberglowbait_sel.png",
+      "masked_frac": 0.263
+    },
+    {
+      "bait": "fakefly",
+      "kind": "normal",
+      "file": "bait_fakefly.png",
+      "masked_frac": 0.355
+    },
+    {
+      "bait": "fakefly",
+      "kind": "selected",
+      "file": "bait_fakefly_b.png",
+      "masked_frac": 0.356
+    },
+    {
+      "bait": "fakefly",
+      "kind": "selected",
+      "file": "bait_fakefly_c.png",
+      "masked_frac": 0.359
+    },
+    {
+      "bait": "fakefly",
+      "kind": "selected",
+      "file": "bait_fakefly_sel.png",
+      "masked_frac": 0.387
+    },
+    {
+      "bait": "falseworm",
+      "kind": "normal",
+      "file": "bait_falseworm.png",
+      "masked_frac": 0.208
+    },
+    {
+      "bait": "falseworm",
+      "kind": "selected",
+      "file": "bait_falseworm_b.png",
+      "masked_frac": 0.207
+    },
+    {
+      "bait": "falseworm",
+      "kind": "selected",
+      "file": "bait_falseworm_c.png",
+      "masked_frac": 0.207
+    },
+    {
+      "bait": "falseworm",
+      "kind": "selected",
+      "file": "bait_falseworm_sel.png",
+      "masked_frac": 0.205
+    },
+    {
+      "bait": "flashingmaintenancemekbait",
+      "kind": "normal",
+      "file": "bait_flashingmaintenancemekbait.png",
+      "masked_frac": 0.306
+    },
+    {
+      "bait": "flashingmaintenancemekbait",
+      "kind": "selected",
+      "file": "bait_flashingmaintenancemekbait_b.png",
+      "masked_frac": 0.302
+    },
+    {
+      "bait": "flashingmaintenancemekbait",
+      "kind": "selected",
+      "file": "bait_flashingmaintenancemekbait_c.png",
+      "masked_frac": 0.31
+    },
+    {
+      "bait": "flashingmaintenancemekbait",
+      "kind": "selected",
+      "file": "bait_flashingmaintenancemekbait_sel.png",
+      "masked_frac": 0.321
+    },
+    {
+      "bait": "fruitpaste",
+      "kind": "normal",
+      "file": "bait_fruitpaste.png",
+      "masked_frac": 0.098
+    },
+    {
+      "bait": "fruitpaste",
+      "kind": "selected",
+      "file": "bait_fruitpaste_b.png",
+      "masked_frac": 0.102
+    },
+    {
+      "bait": "fruitpaste",
+      "kind": "selected",
+      "file": "bait_fruitpaste_c.png",
+      "masked_frac": 0.091
+    },
+    {
+      "bait": "fruitpaste",
+      "kind": "selected",
+      "file": "bait_fruitpaste_sel.png",
+      "masked_frac": 0.055
+    },
+    {
+      "bait": "redrot",
+      "kind": "normal",
+      "file": "bait_redrot.png",
+      "masked_frac": 0.094
+    },
+    {
+      "bait": "redrot",
+      "kind": "selected",
+      "file": "bait_redrot_b.png",
+      "masked_frac": 0.096
+    },
+    {
+      "bait": "redrot",
+      "kind": "selected",
+      "file": "bait_redrot_c.png",
+      "masked_frac": 0.088
+    },
+    {
+      "bait": "redrot",
+      "kind": "selected",
+      "file": "bait_redrot_sel.png",
+      "masked_frac": 0.051
+    },
+    {
+      "bait": "refreshinglakkabait",
+      "kind": "normal",
+      "file": "bait_refreshinglakkabait.png",
+      "masked_frac": 0.379
+    },
+    {
+      "bait": "refreshinglakkabait",
+      "kind": "selected",
+      "file": "bait_refreshinglakkabait_b.png",
+      "masked_frac": 0.37
+    },
+    {
+      "bait": "refreshinglakkabait",
+      "kind": "selected",
+      "file": "bait_refreshinglakkabait_c.png",
+      "masked_frac": 0.388
+    },
+    {
+      "bait": "refreshinglakkabait",
+      "kind": "selected",
+      "file": "bait_refreshinglakkabait_sel.png",
+      "masked_frac": 0.409
+    },
+    {
+      "bait": "sourbait",
+      "kind": "normal",
+      "file": "bait_sourbait.png",
+      "masked_frac": 0.176
+    },
+    {
+      "bait": "sourbait",
+      "kind": "selected",
+      "file": "bait_sourbait_b.png",
+      "masked_frac": 0.18
+    },
+    {
+      "bait": "sourbait",
+      "kind": "selected",
+      "file": "bait_sourbait_c.png",
+      "masked_frac": 0.172
+    },
+    {
+      "bait": "sourbait",
+      "kind": "selected",
+      "file": "bait_sourbait_sel.png",
+      "masked_frac": 0.15
+    },
+    {
+      "bait": "spinelgrainbait",
+      "kind": "normal",
+      "file": "bait_spinelgrainbait.png",
+      "masked_frac": 0.298
+    },
+    {
+      "bait": "spinelgrainbait",
+      "kind": "selected",
+      "file": "bait_spinelgrainbait_b.png",
+      "masked_frac": 0.291
+    },
+    {
+      "bait": "spinelgrainbait",
+      "kind": "selected",
+      "file": "bait_spinelgrainbait_c.png",
+      "masked_frac": 0.296
+    },
+    {
+      "bait": "spinelgrainbait",
+      "kind": "selected",
+      "file": "bait_spinelgrainbait_sel.png",
+      "masked_frac": 0.265
+    },
+    {
+      "bait": "sugardew",
+      "kind": "normal",
+      "file": "bait_sugardew.png",
+      "masked_frac": 0.118
+    },
+    {
+      "bait": "sugardew",
+      "kind": "selected",
+      "file": "bait_sugardew_b.png",
+      "masked_frac": 0.12
+    },
+    {
+      "bait": "sugardew",
+      "kind": "selected",
+      "file": "bait_sugardew_c.png",
+      "masked_frac": 0.12
+    },
+    {
+      "bait": "sugardew",
+      "kind": "selected",
+      "file": "bait_sugardew_sel.png",
+      "masked_frac": 0.119
+    },
+    {
+      "bait": null,
+      "kind": "menu_confirm",
+      "file": "menu_confirm.png",
+      "size": [
+        160,
+        36
+      ]
+    },
+    {
+      "bait": null,
+      "kind": "menu_cancel",
+      "file": "menu_cancel.png",
+      "size": [
+        150,
+        36
+      ]
+    },
+    {
+      "bait": null,
+      "kind": "btn_rod",
+      "file": "btn_rod.png",
+      "glyph_frac": 0.03
+    },
+    {
+      "bait": null,
+      "kind": "btn_bait",
+      "file": "btn_bait.png",
+      "glyph_frac": 0.136
+    }
+  ],
+  "validation": [
+    {
+      "template": "btn_rod.png",
+      "min_diff": 0,
+      "found_at": [
+        1585,
+        955
+      ],
+      "expected_match": true,
+      "matched": true
+    },
+    {
+      "template": "btn_bait.png",
+      "min_diff": 0,
+      "found_at": [
+        1680,
+        955
+      ],
+      "expected_match": true,
+      "matched": true
+    },
+    {
+      "template": "bait_berrybait.png",
+      "min_diff": 160,
+      "found_at": [
+        1062,
+        468
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_berrybait_b.png",
+      "min_diff": 162,
+      "found_at": [
+        1052,
+        462
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_berrybait_c.png",
+      "min_diff": 157,
+      "found_at": [
+        1061,
+        468
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_berrybait_sel.png",
+      "min_diff": 155,
+      "found_at": [
+        912,
+        454
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_emberglowbait.png",
+      "min_diff": 168,
+      "found_at": [
+        916,
+        446
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_emberglowbait_b.png",
+      "min_diff": 165,
+      "found_at": [
+        917,
+        455
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_emberglowbait_c.png",
+      "min_diff": 165,
+      "found_at": [
+        912,
+        454
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_emberglowbait_sel.png",
+      "min_diff": 170,
+      "found_at": [
+        918,
+        451
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_fakefly.png",
+      "min_diff": 157,
+      "found_at": [
+        786,
+        470
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_fakefly_b.png",
+      "min_diff": 154,
+      "found_at": [
+        781,
+        474
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_fakefly_c.png",
+      "min_diff": 158,
+      "found_at": [
+        777,
+        479
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_fakefly_sel.png",
+      "min_diff": 163,
+      "found_at": [
+        783,
+        476
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_falseworm.png",
+      "min_diff": 187,
+      "found_at": [
+        1055,
+        461
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_falseworm_b.png",
+      "min_diff": 187,
+      "found_at": [
+        1055,
+        462
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_falseworm_c.png",
+      "min_diff": 189,
+      "found_at": [
+        1055,
+        460
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_falseworm_sel.png",
+      "min_diff": 189,
+      "found_at": [
+        1058,
+        461
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_flashingmaintenancemekbait.png",
+      "min_diff": 36,
+      "found_at": [
+        1059,
+        457
+      ],
+      "expected_match": true,
+      "matched": true
+    },
+    {
+      "template": "bait_flashingmaintenancemekbait_b.png",
+      "min_diff": 69,
+      "found_at": [
+        1060,
+        458
+      ],
+      "expected_match": true,
+      "matched": false
+    },
+    {
+      "template": "bait_flashingmaintenancemekbait_c.png",
+      "min_diff": 31,
+      "found_at": [
+        1059,
+        457
+      ],
+      "expected_match": true,
+      "matched": true
+    },
+    {
+      "template": "bait_flashingmaintenancemekbait_sel.png",
+      "min_diff": 174,
+      "found_at": [
+        1065,
+        456
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_fruitpaste.png",
+      "min_diff": 169,
+      "found_at": [
+        917,
+        465
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_fruitpaste_b.png",
+      "min_diff": 168,
+      "found_at": [
+        918,
+        467
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_fruitpaste_c.png",
+      "min_diff": 169,
+      "found_at": [
+        918,
+        466
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_fruitpaste_sel.png",
+      "min_diff": 174,
+      "found_at": [
+        924,
+        469
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_redrot.png",
+      "min_diff": 152,
+      "found_at": [
+        919,
+        463
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_redrot_b.png",
+      "min_diff": 152,
+      "found_at": [
+        919,
+        463
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_redrot_c.png",
+      "min_diff": 154,
+      "found_at": [
+        919,
+        464
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_redrot_sel.png",
+      "min_diff": 155,
+      "found_at": [
+        925,
+        468
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_refreshinglakkabait.png",
+      "min_diff": 188,
+      "found_at": [
+        996,
+        437
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_refreshinglakkabait_b.png",
+      "min_diff": 183,
+      "found_at": [
+        996,
+        440
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_refreshinglakkabait_c.png",
+      "min_diff": 188,
+      "found_at": [
+        996,
+        438
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_refreshinglakkabait_sel.png",
+      "min_diff": 191,
+      "found_at": [
+        1075,
+        440
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_sourbait.png",
+      "min_diff": 47,
+      "found_at": [
+        918,
+        457
+      ],
+      "expected_match": true,
+      "matched": true
+    },
+    {
+      "template": "bait_sourbait_b.png",
+      "min_diff": 33,
+      "found_at": [
+        919,
+        458
+      ],
+      "expected_match": true,
+      "matched": true
+    },
+    {
+      "template": "bait_sourbait_c.png",
+      "min_diff": 101,
+      "found_at": [
+        918,
+        457
+      ],
+      "expected_match": true,
+      "matched": false
+    },
+    {
+      "template": "bait_sourbait_sel.png",
+      "min_diff": 164,
+      "found_at": [
+        922,
+        463
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_spinelgrainbait.png",
+      "min_diff": 186,
+      "found_at": [
+        778,
+        465
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_spinelgrainbait_b.png",
+      "min_diff": 186,
+      "found_at": [
+        777,
+        463
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_spinelgrainbait_c.png",
+      "min_diff": 181,
+      "found_at": [
+        768,
+        466
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_spinelgrainbait_sel.png",
+      "min_diff": 177,
+      "found_at": [
+        772,
+        472
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_sugardew.png",
+      "min_diff": 106,
+      "found_at": [
+        777,
+        454
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_sugardew_b.png",
+      "min_diff": 106,
+      "found_at": [
+        776,
+        454
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_sugardew_c.png",
+      "min_diff": 108,
+      "found_at": [
+        776,
+        454
+      ],
+      "expected_match": false,
+      "matched": false
+    },
+    {
+      "template": "bait_sugardew_sel.png",
+      "min_diff": 46,
+      "found_at": [
+        780,
+        458
+      ],
+      "expected_match": true,
+      "matched": true
+    }
+  ]
+}

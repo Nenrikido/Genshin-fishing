@@ -24,23 +24,15 @@ if InStr(FileExist("dist"), "D")
 FileCreateDir, dist
 
 ; Generate fileinstalls
-img_list:=Object("bar",Object("filename","bar.png")
-,"casting",Object("filename","casting.png")
-,"cur",Object("filename","cur.png")
-,"left",Object("filename","left.png")
-,"ready",Object("filename","ready.png")
-,"reel",Object("filename","reel.png")
-,"right",Object("filename","right.png"))
 fip:=FileOpen("fileinstalls.ahk", "w")
 Loop, Files, .\assets\*, D
 {
-	; MsgBox, % A_LoopFileLongPath "`n" A_LoopFileShortPath "`n" A_LoopFileName 
-	fip.WriteLine("`r`nFileCreateDir, % A_Temp ""\genshinfishing\" A_LoopFileName """")
-	for k, v in img_list
+	resDirName := A_LoopFileName
+	resDirShort := A_LoopFileShortPath
+	fip.WriteLine("`r`nFileCreateDir, % A_Temp ""\genshinfishing\" resDirName """)
+	Loop, Files, % resDirShort "\*.*", F
 	{
-		; MsgBox, % A_LoopFileShortPath "\" v.filename "`n" A_Temp "\genshinfishing\" A_LoopFileName "\" v.filename
-		; FileInstall, % A_LoopFileShortPath "\" v.filename, % A_Temp "\genshinfishing\" A_LoopFileName "\" v.filename, 1
-		fip.WriteLine("FileInstall, " A_LoopFileShortPath "\" v.filename ", % A_Temp ""\genshinfishing\" A_LoopFileName "\" v.filename """, 1")
+		fip.WriteLine("FileInstall, " A_LoopFileShortPath ", % A_Temp ""\genshinfishing\" resDirName "\" A_LoopFileName """, 1")
 	}
 }
 fip.Close()
