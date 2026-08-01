@@ -63,11 +63,8 @@ for objItem in ComObjGet("winmgmts:").ExecQuery("SELECT * FROM Win32_NetworkAdap
 	Break
 }
 #Include regist.ahk
-if(isRegisted()){
-	g_regist := true
-} else {
-	g_regist := false
-}
+; fork: always skip the upstream "free version" wait screen
+g_regist := true
 
 
 #Include menu.ahk
@@ -974,7 +971,7 @@ if(statePredict=="unknown" || statePredict=="ready") {
 } else if(statePredict=="reel") {
 	DllCall("QueryPerformanceCounter", "Int64P",  startTime)
 	if(barY<2) {
-		ImageSearch, _, barY, barR_left, barR_top, barR_right, barR_bottom, % "*20 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.bar.filename
+		ImageSearch, _, barY, barR_left, barR_top, barR_right, barR_bottom, % "*80 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.bar.filename
 		if(ErrorLevel){
 			if(barY == 0) {
 				barY := 1
@@ -994,9 +991,9 @@ if(statePredict=="unknown" || statePredict=="ready") {
 		DllCall("QueryPerformanceCounter", "Int64P",  endTime)
 	} else {
 		if(leftX > 0) {
-			ImageSearch, leftX, leftY, leftX-delta_left, barY-delta_top, leftX+delta_right, barY+delta_bottom, % "*16 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.left.filename
+			ImageSearch, leftX, leftY, leftX-delta_left, barY-delta_top, leftX+delta_right, barY+delta_bottom, % "*80 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.left.filename
 		} else {
-			ImageSearch, leftX, leftY, barS_left, barY-delta_top, barS_right, barY+delta_bottom, % "*16 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.left.filename
+			ImageSearch, leftX, leftY, barS_left, barY-delta_top, barS_right, barY+delta_bottom, % "*80 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.left.filename
 		}
 		if(ErrorLevel){
 			leftX := 0
@@ -1007,9 +1004,9 @@ if(statePredict=="unknown" || statePredict=="ready") {
 		}
 
 		if(rightX > 0) {
-			ImageSearch, rightX, rightY, rightX-delta_left, barY-delta_top, rightX+delta_right, barY+delta_bottom, % "*16 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.right.filename
+			ImageSearch, rightX, rightY, rightX-delta_left, barY-delta_top, rightX+delta_right, barY+delta_bottom, % "*80 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.right.filename
 		} else {
-			ImageSearch, rightX, rightY, barS_left, barY-delta_top, barS_right, barY+delta_bottom, % "*16 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.right.filename
+			ImageSearch, rightX, rightY, barS_left, barY-delta_top, barS_right, barY+delta_bottom, % "*80 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.right.filename
 		}
 		if(ErrorLevel){
 			rightX := 0
@@ -1020,9 +1017,9 @@ if(statePredict=="unknown" || statePredict=="ready") {
 		}
 
 		if(curX > 0) {
-			ImageSearch, curX, curY, curX-delta_left, barY-delta_top, curX+delta_right, barY+delta_bottom, % "*16 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.cur.filename
+			ImageSearch, curX, curY, curX-delta_left, barY-delta_top, curX+delta_right, barY+delta_bottom, % "*80 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.cur.filename
 		} else {
-			ImageSearch, curX, curY, barS_left, barY-delta_top, barS_right, barY+delta_bottom, % "*16 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.cur.filename
+			ImageSearch, curX, curY, barS_left, barY-delta_top, barS_right, barY+delta_bottom, % "*80 *TransFuchsia " A_Temp "/genshinfishing/" winW winH "/" img_list.cur.filename
 		}
 		if(ErrorLevel){
 			curX := 0

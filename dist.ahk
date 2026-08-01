@@ -29,7 +29,7 @@ Loop, Files, .\assets\*, D
 {
 	resDirName := A_LoopFileName
 	resDirShort := A_LoopFileShortPath
-	fip.WriteLine("`r`nFileCreateDir, % A_Temp ""\genshinfishing\" resDirName """)
+	fip.WriteLine("`r`nFileCreateDir, % A_Temp ""\genshinfishing\" resDirName """")
 	Loop, Files, % resDirShort "\*.*", F
 	{
 		fip.WriteLine("FileInstall, " A_LoopFileShortPath ", % A_Temp ""\genshinfishing\" resDirName "\" A_LoopFileName """, 1")
