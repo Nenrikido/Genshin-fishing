@@ -33,20 +33,25 @@ GAME_EXES = ("GenshinImpact.exe", "YuanShen.exe")
 # same values as the AHK script
 VAR_STATE = 32
 VAR_BAR = 80
+# "Start Fishing" button: true matches <=40 across two sessions, false floor >=80
+VAR_PANEL = 50
 
 log_level = 0
+log_to_file = True
 _log_file = None
 
 
 def log(txt, level=0):
     global _log_file
     if log_level >= level:
-        if _log_file is None:
-            _log_file = open(LOG_PATH, "a", encoding="utf-8")
-        t = time.localtime()
-        _log_file.write(f"{t.tm_hour}:{t.tm_min}:{t.tm_sec}.{int(time.time()*1000)%1000}[{level}]:{txt}\n")
-        _log_file.flush()
-        print(f"[{level}] {txt}")
+        now = time.time()
+        stamp = time.strftime("%H:%M:%S", time.localtime(now)) + f".{int(now*1000)%1000:03d}"
+        if log_to_file:
+            if _log_file is None:
+                _log_file = open(LOG_PATH, "a", encoding="utf-8")
+            _log_file.write(f"{stamp}[{level}]:{txt}\n")
+            _log_file.flush()
+        print(f"{stamp}[{level}] {txt}")
 
 
 # ---------------------------------------------------------------- window ----
@@ -124,11 +129,29 @@ class Mouse:
         if not self.down:
             _mouse_event(MOUSEEVENTF_LEFTDOWN)
             self.down = True
+            log("LMB down", 1)
 
     def release(self):
         if self.down:
             _mouse_event(MOUSEEVENTF_LEFTUP)
             self.down = False
+            log("LMB up", 1)
+
+    def click_at(self, screen_x, screen_y):
+        """Move to a screen position and click (menus need a real cursor pos)."""
+        self.release()
+        user32.SetCursorPos(int(screen_x), int(screen_y))
+        time.sleep(0.05)
+        _mouse_event(MOUSEEVENTF_LEFTDOWN)
+        time.sleep(0.04)
+        _mouse_event(MOUSEEVENTF_LEFTUP)
+        log(f"click at {screen_x},{screen_y}", 1)
+
+    def cast(self, hold_s):
+        """Charge and release the rod: hold LMB, then let go."""
+        self.hold()
+        time.sleep(hold_s)
+        self.release()
 
 
 # ------------------------------------------------------------- templates ----
@@ -150,6 +173,11 @@ def load_templates(res_dir):
     t = {}
     for name in ("ready", "reel", "casting", "bar", "left", "right", "cur"):
         t[name] = Template(os.path.join(res_dir, name + ".png"))
+    # only cut for 1080p so far; without it the panel is simply not automated
+    for name in ("btn_startfishing",):
+        p = os.path.join(res_dir, name + ".png")
+        if os.path.exists(p):
+            t[name] = Template(p)
     return t
 
 
@@ -211,11 +239,30 @@ class Bot:
         self.state = "unknown"
         self.state_predict = "unknown"
         self.state_unknown_start = 0.0
-        self.bar_y = 0
-        self.left_x = self.right_x = self.cur_x = 0
+        self.last_icon = None
+        self.reset_fight()
+
+    def reset_fight(self):
+        self.bar_seen = False
+        self.bar_misses = 0
+        self.zone_w = 150.0 * self.dline / 2202.0
         self.left_x_old = self.right_x_old = self.cur_x_old = 0
         self.left_pred = self.right_pred = self.cur_pred = 0
-        self.last_icon = None
+
+    def find_start_button(self, frame):
+        """Center of the active 'Start Fishing' button, or None.
+
+        Only matches while the button is enabled (a rod and bait are picked),
+        so a click is always meaningful.
+        """
+        t = self.t.get("btn_startfishing")
+        if t is None:
+            return None
+        d = self.dpt
+        hit = search(frame, t, d(0.5), d(0.42), self.w, self.h, VAR_PANEL)
+        if hit is None:
+            return None
+        return hit[0] + t.w // 2, hit[1] + t.h // 2
 
     # -- state detection (port of getState) --
     def get_state(self, frame):
@@ -248,57 +295,115 @@ class Bot:
             self.state_predict = "unknown"
             log("state->unknown", 1)
 
-    # -- reel minigame (port of the AHK reel branch) --
+    # -- reel minigame: column-profile detector on the tension bar band --
+    # Elements (brackets ◄ ►, cursor I) are tall solid-yellow column clusters;
+    # the zone outline between brackets is only ~4px of fill per column, so a
+    # filled-height threshold separates them. Robust to motion blur, which
+    # broke per-element template matching (~20% cursor hit rate live).
+    def detect_bar(self, frame):
+        y0, y1 = self.dpt(0.0418), self.dpt(0.0627)
+        band = frame[y0:y1, self.barS_left:self.barS_right]
+        r = band[:, :, 2].astype(np.int16)
+        g = band[:, :, 1].astype(np.int16)
+        b = band[:, :, 0].astype(np.int16)
+        m = (r > 150) & (g > 120) & (r - b > 45) & (g - b > 25)
+        heights = m.sum(axis=0)
+        min_h = max(10, round(14 * self.dline / 2202))
+        xs = np.where(heights >= min_h)[0]
+        clusters = []
+        if len(xs):
+            start = prev = xs[0]
+            for x in xs[1:]:
+                if x - prev > 3:
+                    clusters.append((start, prev))
+                    start = x
+                prev = x
+            clusters.append((start, prev))
+        return [(int(c0) + self.barS_left, int(c1) + self.barS_left,
+                 int(heights[c0:c1 + 1].max()))
+                for c0, c1 in clusters if c1 - c0 >= 3]
+
+    def interpret_bar(self, clusters):
+        """-> (zone_left, zone_right, cursor_x), any of which may be None."""
+        s = self.dline / 2202.0
+        if len(clusters) < 2:
+            if len(clusters) == 1:
+                c0, c1, _ = clusters[0]
+                return None, None, (c0 + c1) // 2
+            return None, None, None
+        best = None
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                sep = clusters[j][1] - clusters[i][0]
+                if 80 * s <= sep <= 210 * s:
+                    score = abs(sep - self.zone_w)
+                    if best is None or score < best[0]:
+                        best = (score, i, j, sep)
+        if best is None:
+            c = max(clusters, key=lambda c: c[2])
+            return None, None, (c[0] + c[1]) // 2
+        _, i, j, sep = best
+        zl, zr = clusters[i][0], clusters[j][1]
+        rest = [c for k, c in enumerate(clusters) if k not in (i, j)]
+        if rest:
+            c = max(rest, key=lambda c: c[2])
+            cursor = (c[0] + c[1]) // 2
+        else:
+            # cursor hidden behind a bracket: the overlapped cluster is wider
+            lw = clusters[i][1] - clusters[i][0]
+            rw = clusters[j][1] - clusters[j][0]
+            if lw > 26 * s:
+                cursor = clusters[i][0] + lw // 2
+            elif rw > 26 * s:
+                cursor = clusters[j][0] + rw // 2
+            else:
+                cursor = None
+        self.zone_w = 0.7 * self.zone_w + 0.3 * sep
+        return zl, zr, cursor
+
     def reel_tick(self, frame, mouse):
-        d_l, d_t, d_r, d_b = self.delta
-        if self.bar_y < 2:
-            hit = search(frame, self.t["bar"], *self.barR, VAR_BAR)
-            if hit is None:
-                # not found yet: jiggle the line to keep the fish hooked
-                if self.bar_y == 0:
-                    self.bar_y = 1
-                    mouse.hold()
-                else:
-                    self.bar_y = 0
-                    mouse.release()
-            else:
-                self.bar_y = hit[1]
+        clusters = self.detect_bar(frame)
+        zl, zr, cx = self.interpret_bar(clusters)
+
+        if zl is None and cx is None:
+            self.bar_misses += 1
+            # bar gone mid-fight (~0.25s) means it is over; never appearing at
+            # all (~3s) means the reel state was a false read
+            if self.bar_misses >= (6 if self.bar_seen else 120):
+                self.get_state(frame)
                 mouse.release()
-                self.left_x = self.right_x = self.cur_x = 0
-                log(f"get barY={self.bar_y}", 2)
+                return self.state_predict == "reel"
+            if not self.bar_seen:
+                # bite just started, bar still fading in: jiggle to hook
+                if mouse.down:
+                    mouse.release()
+                else:
+                    mouse.hold()
             return True
+        self.bar_misses = 0
+        if not self.bar_seen:
+            self.bar_seen = True
+            log(f"bar found zone={zl}-{zr} cur={cx}", 1)
 
-        def track(name, prev_x):
-            if prev_x > 0:
-                hit = search(frame, self.t[name], prev_x - d_l, self.bar_y - d_t,
-                             prev_x + d_r, self.bar_y + d_b, VAR_BAR)
-            else:
-                hit = search(frame, self.t[name], self.barS_left, self.bar_y - d_t,
-                             self.barS_right, self.bar_y + d_b, VAR_BAR)
-            return hit[0] if hit else 0
-
-        lx = track("left", self.left_x)
-        if lx:
-            self.left_pred = 2 * lx - self.left_x_old
-            self.left_x_old = lx
-        rx = track("right", self.right_x)
-        if rx:
-            self.right_pred = 2 * rx - self.right_x_old
-            self.right_x_old = rx
-        cx = track("cur", self.cur_x)
-        if cx:
-            self.cur_pred = 2 * cx - self.cur_x_old
+        if zl is not None:
+            self.left_pred = 2 * zl - self.left_x_old if self.left_x_old else zl
+            self.right_pred = 2 * zr - self.right_x_old if self.right_x_old else zr
+            drift = (zl + zr) - (self.left_x_old + self.right_x_old)
+            self.left_x_old, self.right_x_old = zl, zr
+        else:
+            drift = 0
+        if cx is not None:
+            self.cur_pred = 2 * cx - self.cur_x_old if self.cur_x_old else cx
             self.cur_x_old = cx
-        self.left_x, self.right_x, self.cur_x = lx, rx, cx
+        elif zl is not None:
+            # cursor invisible but zone visible: it is inside the zone, aim center
+            self.cur_pred = (self.left_pred + self.right_pred) // 2
+            self.cur_x_old = 0
 
-        if not lx and not rx and not cx:
-            self.get_state(frame)
-            mouse.release()
-            return self.state_predict == "reel"
         # zone drifting left -> aim near left edge; drifting right -> near right
-        if lx + rx < self.left_x_old + self.right_x_old:
+        if drift < 0:
             k = 0.2
-        elif lx + rx > self.left_x_old + self.right_x_old:
+        elif drift > 0:
             k = 0.8
         else:
             k = 0.4
@@ -306,16 +411,37 @@ class Bot:
             mouse.hold()
         else:
             mouse.release()
-        log(f"leftX={lx} rightX={rx} curX={cx}", 2)
+        log(f"zone={zl}-{zr} cur={cx} pred={self.cur_pred} k={k}", 2)
         return True
 
 
 # -------------------------------------------------------------- live run ----
 
+def ensure_elevated():
+    """Genshin drops synthetic input from non-elevated processes (UIPI), so
+    relaunch through UAC like the AHK version did. Declining the prompt
+    continues in detection-only mode."""
+    if ctypes.windll.shell32.IsUserAnAdmin():
+        return True
+    script = os.path.abspath(__file__)
+    r = ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", sys.executable, f'"{script}"', ROOT, 1)
+    if r > 32:  # elevated copy launched, this one exits
+        sys.exit(0)
+    return False
+
+
 def run_live():
     global log_level
-    log_level = read_log_level()
-    log(f"Start (python) at {time.strftime('%Y-%m-%d')}")
+    cfg = read_config()
+    log_level = cfg["log"]
+    elevated = ensure_elevated()
+    log(f"Start (python) at {time.strftime('%Y-%m-%d')}, admin={elevated}")
+    if not elevated:
+        log("NOT elevated: clicks will likely be ignored by the game", 0)
+    log(f"autostart={cfg['autostart']} autocast={cfg['autocast']} "
+        f"cast_hold={cfg['cast_hold']}s bite_timeout={cfg['bite_timeout']}s", 0)
+    cast_start = 0.0
 
     # F5 quits (RegisterHotKey id=1)
     user32.RegisterHotKey(None, 1, 0, 0x74)
@@ -356,25 +482,51 @@ def run_live():
                 t0 = time.perf_counter()
                 bot.reel_tick(frame, mouse)
                 dt = time.perf_counter() - t0
-                time.sleep(max(0.01, 0.04 - dt))
+                time.sleep(max(0.005, 0.025 - dt))
                 if bot.state_predict != "reel":
-                    bot.bar_y = 0
+                    bot.reset_fight()
+                    cast_start = 0.0
             elif bot.state_predict == "casting":
                 frame = cap.grab(left, top, w, h)
                 bot.get_state(frame)
                 if bot.state_predict == "reel":
+                    bot.reset_fight()
                     mouse.hold()
-                    time.sleep(0.04)
+                    time.sleep(0.025)
+                elif (cfg["autocast"] and cast_start
+                        and time.monotonic() - cast_start > cfg["bite_timeout"]):
+                    # nothing bit: reel in so the ready branch can recast
+                    log(f"no bite in {cfg['bite_timeout']}s, reeling in", 1)
+                    mouse.click_at(left + w // 2, top + h // 2)
+                    cast_start = 0.0
+                    time.sleep(1.5)
                 else:
                     time.sleep(0.2)
             else:  # unknown / ready
                 frame = cap.grab(left, top, w, h)
                 bot.get_state(frame)
                 if bot.state_predict == "reel":
-                    time.sleep(0.04)
+                    bot.reset_fight()
+                    time.sleep(0.025)
+                elif bot.state_predict == "ready":
+                    bot.reset_fight()
+                    if cfg["autocast"]:
+                        log("ready: casting", 1)
+                        mouse.cast(cfg["cast_hold"])
+                        cast_start = time.monotonic()
+                        time.sleep(1.0)
+                    else:
+                        time.sleep(0.8)
                 else:
-                    bot.bar_y = 0
-                    time.sleep(0.8)
+                    # not in fishing mode: the Prepare to Fish panel may be open
+                    bot.reset_fight()
+                    btn = bot.find_start_button(frame) if cfg["autostart"] else None
+                    if btn:
+                        log("Prepare to Fish panel: starting", 1)
+                        mouse.click_at(left + btn[0], top + btn[1])
+                        time.sleep(1.5)
+                    else:
+                        time.sleep(0.5)
     finally:
         mouse.release()
         user32.UnregisterHotKey(None, 1)
@@ -388,24 +540,44 @@ def quit_hotkey_pressed():
     return False
 
 
-def read_log_level():
-    """setting.ini [update] log=N (utf-16), default 1 for the python bot."""
+def read_config():
+    """setting.ini, written as UTF-16 by the AHK build. All keys optional."""
+    cp = None
     path = os.path.join(ROOT, "setting.ini")
-    try:
-        import configparser
-        cp = configparser.ConfigParser()
-        with open(path, encoding="utf-16") as f:
-            cp.read_file(f)
-        return cp.getint("update", "log", fallback=1)
-    except Exception:
-        return 1
+    for enc in ("utf-16", "utf-8-sig", "utf-8"):
+        try:
+            import configparser
+            c = configparser.ConfigParser()
+            with open(path, encoding=enc) as f:
+                c.read_file(f)
+            cp = c
+            break
+        except Exception:
+            continue
+
+    def get(section, key, default, cast=int):
+        if cp is None:
+            return default
+        try:
+            return cast(cp.get(section, key))
+        except Exception:
+            return default
+
+    return {
+        "log": get("update", "log", 1),
+        "autostart": bool(get("autocast", "autostart", 1)),
+        "autocast": bool(get("autocast", "enabled", 1)),
+        "cast_hold": get("autocast", "cast_hold_ms", 600) / 1000.0,
+        "bite_timeout": get("autocast", "bite_timeout_s", 35),
+    }
 
 
 # ------------------------------------------------------------- test mode ----
 
 def run_test(frames_dir):
-    global log_level
+    global log_level, log_to_file
     log_level = 2
+    log_to_file = False  # keep offline runs out of genshinfishing.log
     files = sorted(glob.glob(os.path.join(frames_dir, "*.png")))
     if not files:
         print("no PNG frames in", frames_dir)
@@ -430,23 +602,34 @@ def run_test(frames_dir):
                 self.actions.append("release")
             self.down = False
 
+    # Replay the frames as one continuous fight so the tracking state
+    # (zone width prior, predicted positions, drift) evolves like it does live.
+    mouse = FakeMouse()
+    stats = {"zone": 0, "cursor": 0, "blind": 0, "in_zone": 0, "decided": 0}
     for f in files:
         frame = cv2.imread(f)
         bot.get_state(frame)
-        line = f"{os.path.basename(f)}: state={bot.state}"
-        # probe the tension bar on every frame (false-positive check on non-fight ones)
-        hit = search(frame, bot.t["bar"], *bot.barR, VAR_BAR)
-        if hit:
-            m = FakeMouse()
-            bot.state_predict = "reel"
-            bot.reel_tick(frame, m)  # bar anchor pass
-            bot.reel_tick(frame, m)  # element tracking pass
-            line += (f" barY={bot.bar_y} left={bot.left_x} right={bot.right_x}"
-                     f" cur={bot.cur_x} mouse={'/'.join(m.actions) or 'idle'}")
-        bot.bar_y = 0
-        bot.left_x = bot.right_x = bot.cur_x = 0
-        bot.state_predict = "unknown"
-        print(line)
+        clusters = bot.detect_bar(frame)
+        zl, zr, cx = bot.interpret_bar(clusters)
+        if zl is not None:
+            stats["zone"] += 1
+        if cx is not None:
+            stats["cursor"] += 1
+        if zl is None and cx is None:
+            stats["blind"] += 1
+        bot.state_predict = "reel"
+        before = mouse.down
+        bot.reel_tick(frame, mouse)
+        if zl is not None and cx is not None:
+            stats["decided"] += 1
+            if zl <= cx <= zr:
+                stats["in_zone"] += 1
+        print(f"{os.path.basename(f)}: state={bot.state} zone={zl}-{zr} cur={cx}"
+              f" lmb={'DOWN' if mouse.down else 'up'}{' *' if before != mouse.down else ''}")
+    n = len(files)
+    print(f"\n{n} frames: zone found {stats['zone']}, cursor found {stats['cursor']},"
+          f" nothing {stats['blind']}")
+    print(f"cursor inside zone on {stats['in_zone']}/{stats['decided']} fully-tracked frames")
     return 0
 
 
