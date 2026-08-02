@@ -1,9 +1,7 @@
 .idea
 screenshots
 *.ini
-dist
 *.log
 *.exe
-fileinstalls.ahk
 **/__pycache__/*.pyc
 *.mp4
