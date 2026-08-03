@@ -16,6 +16,8 @@ the git history if you need it.
 - `pip install -r requirements.txt` (numpy, opencv-python, mss)
 - Genshin Impact running at **1920x1080**
 
+Or grab a build (see [Building](#building)) and skip Python entirely.
+
 ## Usage
 
 ```
@@ -42,6 +44,20 @@ nothing is identified confidently the equipped bait is simply kept.
 Everything happens inside fishing mode; changing bait uses the in-game
 right-click *change bait* button, so the bot never has to leave.
 
+### How aiming works
+
+The landing ring sits a fixed distance ahead of the camera and cannot be
+steered across the screen, so `aim=1` turns the camera until the fish reaches
+`aim_x_px` instead. The camera response is measured live by phase-correlating
+successive frames — about 2 screen px per mouse unit — so no manual
+calibration is needed.
+
+Steps are deliberately small. An injected move still drags the OS cursor, and
+once that is pinned against a screen edge every further move in the same
+direction is clamped to nothing; the bot recentres the cursor inside the game
+window when it drifts too far. If the camera genuinely does not respond it
+logs `aim camera not responding` and casts straight ahead.
+
 ### Offline check
 
 ```
@@ -51,6 +67,10 @@ python genshin_fishing.py --test-frames <dir-of-1920x1080-pngs>
 Runs state and tension-bar detection over saved frames (e.g. extracted from a
 recording) and prints what it would have done. Handy for diagnosing a bad run
 without the game open.
+
+`--selftest` checks that the templates, bait art, fish icons and config all
+load, and prints where they were found — the quickest way to tell whether a
+build is intact.
 
 To check where a cast actually lands — the number behind `aim_x_px` — take a
 screenshot while the trajectory preview is up and run:
@@ -64,7 +84,8 @@ ring is too dim to find reliably.
 
 ## setting.ini
 
-Read as UTF-16. All keys are optional; defaults shown.
+Copy `setting.ini.example` next to the bot (or the exe) and edit it. UTF-8 and
+UTF-16 both read fine, and every key is optional — defaults shown.
 
 | Section | Key | Default | Meaning |
 | --- | --- | --- | --- |
@@ -72,7 +93,7 @@ Read as UTF-16. All keys are optional; defaults shown.
 | `[autocast]` | `autostart` | `1` | click **Start Fishing** in the panel |
 | | `autobait` | `1` | select bait from the fish present |
 | | `enabled` | `1` | cast automatically |
-| | `aim` | `1` | steer the cast onto a fish (else cast straight ahead) |
+| | `aim` | `1` | turn the camera onto a fish before casting |
 | | `rebait` | `1` | swap bait when the targeted fish are gone |
 | | `rebait_min_fish` | `2` | fish of another kind needed before swapping |
 | | `cast_hold_ms` | `600` | how long the cast is charged — this sets the distance |
@@ -82,12 +103,36 @@ Read as UTF-16. All keys are optional; defaults shown.
 | | `aim_tolerance_px` | `45` | close enough, stop turning |
 | | `aim_timeout_s` | `6` | give up aiming and cast anyway |
 
+## Building
+
+```
+.\build.ps1
+```
+
+Installs PyInstaller if needed and produces `dist\GenshinFishing.exe` (~58 MB,
+one file, no Python required), plus a `dist\setting.ini` copied from the
+example. `assets/` is bundled inside the exe; `setting.ini` and
+`genshinfishing.log` live beside it, so the config survives a rebuild and you
+can drop the exe anywhere.
+
+The exe carries a `requireAdministrator` manifest, so Windows raises the UAC
+prompt on launch. Verify a build with `GenshinFishing.exe --selftest`.
+
+Two things worth knowing:
+
+- **Defender often quarantines freshly built PyInstaller exes.** The build is
+  not UPX-packed (which makes it much worse), but you may still need an
+  exclusion for the folder.
+- A one-file build unpacks to `%TEMP%` on every launch, costing about a second
+  of startup. For a faster build, set `onefile=False` — edit the spec to pass
+  `a.binaries, a.datas` to a `COLLECT()` instead of into `EXE()`.
+
 ## Scope
 
-Bait selection, aiming and the panel/dialog interactions are **1920x1080
-only** — their templates and screen positions are cut for that resolution.
-State detection and the tension-bar minigame scale to other resolutions, but
-are untested there.
+Bait selection and the panel/dialog interactions are **1920x1080 only** —
+their templates and screen positions are cut for that resolution. State
+detection and the tension-bar minigame scale to other resolutions, but are
+untested there.
 
 ## Credits
 

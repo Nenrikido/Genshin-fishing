@@ -1,0 +1,31 @@
+; Copy to setting.ini next to the bot. Every key is optional; these are the
+; defaults. UTF-8 or UTF-16 both read fine.
+[update]
+; 0 quiet, 1 actions, 2 per-tick detail -> genshinfishing.log
+log=1
+
+[autocast]
+; click Start Fishing in the Prepare to Fish panel
+autostart=1
+; pick the bait the fish present want
+autobait=1
+; cast automatically
+enabled=1
+; turn the camera onto a fish before casting
+aim=1
+; swap bait once the fish it targets are gone
+rebait=1
+rebait_min_fish=2
+
+; how long the cast is charged - this is what sets the distance
+cast_hold_ms=600
+; minimum gap between casts (the rod icon reads "ready" mid-animation)
+cast_cooldown_s=5
+; reel in and recast if nothing bites
+bite_timeout_s=35
+
+; screen x the cast lands on; aiming turns until the fish reaches it.
+; check yours with: python -m tools.aim_cast <screenshot-while-aiming>.png
+aim_x_px=995
+aim_tolerance_px=45
+aim_timeout_s=6

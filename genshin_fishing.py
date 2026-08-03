@@ -1,14 +1,16 @@
-"""Genshin fishing bot - Python port of GenshinFishing.ahk.
+"""Genshin fishing bot (1920x1080).
 
-Detects the fishing state from the game HUD and plays the reel (tension bar)
-minigame automatically. Bait selection and casting are still manual until the
-new "Prepare to Fish" flow is automated.
+Reads the fishing state off the HUD and runs the whole loop: Prepare to Fish
+panel -> bait -> Start Fishing -> cast -> bite -> tension-bar minigame ->
+recast, re-baiting when the fish it targets are gone.
 
 Usage:
-    python genshin_fishing.py            # live bot (game must be foreground)
-    python genshin_fishing.py --test-frames <dir>   # offline check on PNGs
+    python genshin_fishing.py                      # live bot
+    python genshin_fishing.py --selftest           # check assets and config
+    python genshin_fishing.py --test-frames <dir>  # offline check on PNGs
 
-F5 quits the live bot. No registration screen, no updater.
+F5 quits the live bot. Runs elevated: Genshin ignores synthetic input from a
+non-elevated process.
 """
 import argparse
 import ctypes
@@ -22,7 +24,13 @@ import time
 import cv2
 import numpy as np
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+# Two roots, because a PyInstaller build separates them: templates and
+# reference icons ride inside the exe (sys._MEIPASS), while setting.ini and
+# the log belong next to it where the user can reach them.
+FROZEN = getattr(sys, "frozen", False)
+ROOT = os.path.dirname(sys.executable if FROZEN
+                       else os.path.abspath(__file__))
+ASSETS = os.path.join(getattr(sys, "_MEIPASS", ROOT), "assets")
 LOG_PATH = os.path.join(ROOT, "genshinfishing.log")
 
 user32 = ctypes.windll.user32
@@ -76,6 +84,11 @@ FISH_BAIT = {
 FISH_SLOT_Y = (432, 520)
 FISH_SLOT_STEP, FISH_SLOT_W = 113, 94
 FISH_MATCH_MAX = -0.45             # icon_similarity above this is a guess
+
+# Camera turn: measured -1.95 screen px of world travel per mouse unit, so a
+# few hundred units covers any correction. Bigger steps only pin the OS
+# cursor against a screen edge, where the moves stop having any effect.
+AIM_PROBE, AIM_STEP_MAX = 80, 200
 FISH_ROW_X = (1110, 1900)          # the "Fish Present" box
 FISH_ROW_CENTER = 1501             # tiles are centred on this
 
@@ -119,15 +132,21 @@ _log_file = None
 
 
 def log(txt, level=0):
-    global _log_file
+    global _log_file, log_to_file
     if log_level >= level:
         now = time.time()
         stamp = time.strftime("%H:%M:%S", time.localtime(now)) + f".{int(now*1000)%1000:03d}"
         if log_to_file:
             if _log_file is None:
-                _log_file = open(LOG_PATH, "a", encoding="utf-8")
-            _log_file.write(f"{stamp}[{level}]:{txt}\n")
-            _log_file.flush()
+                try:
+                    _log_file = open(LOG_PATH, "a", encoding="utf-8")
+                except OSError as e:
+                    # a build dropped somewhere unwritable still runs fine
+                    print(f"(no log file: {e})")
+                    log_to_file = False
+            if _log_file is not None:
+                _log_file.write(f"{stamp}[{level}]:{txt}\n")
+                _log_file.flush()
         print(f"{stamp}[{level}] {txt}")
 
 
@@ -260,7 +279,7 @@ class Template:
 def load_fish_refs(size=96):
     """game8 fish icons, trimmed of their border and scaled to the panel size."""
     refs = {}
-    d = os.path.join(ROOT, "assets", "references", "fish")
+    d = os.path.join(ASSETS, "references", "fish")
     for p in glob.glob(os.path.join(d, "*.png")):
         img = cv2.imread(p, cv2.IMREAD_UNCHANGED)
         if img is None:
@@ -284,6 +303,9 @@ def load_templates(res_dir):
     for name in ("ready", "reel", "casting"):
         t[name] = Template(os.path.join(res_dir, name + ".png"))
     # only cut for 1080p so far; without them those steps stay manual
+    # menu_confirm/menu_cancel are plain crops of the dialog's button text
+    # from a 1080p screenshot, at (1100,740)-(1260,776) and (700,740)-(850,776);
+    # text only, so they match whether the glyphs are keyboard or controller.
     for name in ("btn_startfishing", "menu_confirm", "menu_cancel"):
         p = os.path.join(res_dir, name + ".png")
         if os.path.exists(p):
@@ -294,7 +316,7 @@ def load_templates(res_dir):
 def load_bait_arts():
     """game8 bait card art, scaled to screen size on demand by Bot."""
     arts = {}
-    for p in glob.glob(os.path.join(ROOT, "assets", "references", "bait", "*.png")):
+    for p in glob.glob(os.path.join(ASSETS, "references", "bait", "*.png")):
         img = cv2.imread(p, cv2.IMREAD_COLOR)
         if img is not None:
             arts[os.path.splitext(os.path.basename(p))[0]] = img
@@ -781,13 +803,14 @@ class Bot:
 
 def ensure_elevated():
     """Genshin drops synthetic input from non-elevated processes (UIPI), so
-    relaunch through UAC like the AHK version did. Declining the prompt
-    continues in detection-only mode."""
+    relaunch through UAC. Declining the prompt continues in detection-only
+    mode. The packaged build carries a requireAdministrator manifest, so it
+    is already elevated by the time this runs."""
     if ctypes.windll.shell32.IsUserAnAdmin():
         return True
-    script = os.path.abspath(__file__)
+    args = "" if FROZEN else f'"{os.path.abspath(__file__)}"'
     r = ctypes.windll.shell32.ShellExecuteW(
-        None, "runas", sys.executable, f'"{script}"', ROOT, 1)
+        None, "runas", sys.executable, args, ROOT, 1)
     if r > 32:  # elevated copy launched, this one exits
         sys.exit(0)
     return False
@@ -834,7 +857,7 @@ def run_live():
             if w == 0 or h == 0:
                 time.sleep(0.8)
                 continue
-            res_dir = os.path.join(ROOT, "assets", f"{w}{h}")
+            res_dir = os.path.join(ASSETS, f"{w}{h}")
             if bot is None or bot.w != w or bot.h != h:
                 if not os.path.isdir(res_dir):
                     log(f"Unsupported resolution {w}x{h}")
@@ -1057,12 +1080,19 @@ def aim_and_cast(bot, cap, mouse, geom, cfg, want_bait, fish=None):
 
     The landing ring cannot be steered across the screen - it stays a fixed
     distance ahead of the camera - so aiming means turning until the fish
-    arrives at it. Charging while aiming is what broke the previous version:
+    arrives at it. Charging while aiming is what broke an earlier version:
     the cast kept growing for the whole aim window and ended up landing on
     the far bank, which the game marks invalid (the ring turns red).
+
+    Steps are small on purpose, and each one goes out as a stream of tiny
+    deltas rather than a single jump. The camera turns about 2 screen px per
+    mouse unit, so a few hundred units covers any correction - and an
+    injected move still drags the OS cursor, which stops responding once it
+    is pinned against a screen edge.
     """
     try:
-        from tools.aim_cast import send_relative
+        from tools.aim_cast import (send_relative_smooth, center_cursor,
+                                    cursor_near_edge)
     except Exception as e:                                   # pragma: no cover
         log(f"aim tools unavailable ({e}); casting open-loop", 0)
         mouse.cast(cfg["cast_hold"])
@@ -1084,33 +1114,42 @@ def aim_and_cast(bot, cap, mouse, geom, cfg, want_bait, fish=None):
 
     aim_x, tol = cfg["aim_x"], cfg["aim_tolerance"]
     deadline = time.monotonic() + cfg["aim_timeout"]
+    center_cursor(geom)                # start with room to move either way
     prev = _aim_frame(cap, geom)
     gain = None            # screen px of world travel per mouse unit
-    probe = 200
+    probe = AIM_PROBE
+    stalls = 0
     outcome = "timed out"
     while time.monotonic() < deadline:
         err = aim_x - fish_x           # how far the fish must still travel
         if abs(err) <= tol:
             outcome = "aimed"
             break
+        if cursor_near_edge(geom):
+            center_cursor(geom)        # else further moves get clamped away
+            log("aim: recentred the cursor", 2)
         sent = int(math.copysign(probe, -err) if gain is None
-                   else max(-3000, min(3000, err / gain)))
+                   else max(-AIM_STEP_MAX, min(AIM_STEP_MAX, err / gain)))
         if sent == 0:
             outcome = "aimed"          # inside one mouse unit of the target
             break
-        send_relative(sent, 0)
-        time.sleep(0.15)
+        send_relative_smooth(sent, 0)  # ~0.08s of small deltas
+        time.sleep(0.09)               # let the camera settle before measuring
         cur = _aim_frame(cap, geom)
         sx, _ = world_shift(prev, cur)
         prev = cur
         fish_x += sx                   # the fish rides the world
         if abs(sx) < 4:
-            # the camera did not move: push harder before giving up
-            if gain is None and probe < 3200:
-                probe *= 2
+            stalls += 1
+            # one dead step means nothing; the camera drops the odd input
+            if gain is None and probe < AIM_STEP_MAX:
+                probe = min(AIM_STEP_MAX, probe * 2)
                 continue
-            outcome = f"camera ignores injected motion (last probe {sent})"
+            if stalls < 3:
+                continue
+            outcome = f"camera not responding (last step {sent})"
             break
+        stalls = 0
         g = sx / sent
         gain = g if gain is None else 0.5 * gain + 0.5 * g
         log(f"aim: world {sx:+.0f}px for {sent:+.0f} units, "
@@ -1182,7 +1221,7 @@ def run_test(frames_dir):
         return 1
     first = cv2.imread(files[0])
     h, w = first.shape[:2]
-    res_dir = os.path.join(ROOT, "assets", f"{w}{h}")
+    res_dir = os.path.join(ASSETS, f"{w}{h}")
     bot = Bot(load_templates(res_dir), w, h)
 
     class FakeMouse:
@@ -1231,10 +1270,54 @@ def run_test(frames_dir):
     return 0
 
 
+def run_selftest():
+    """Check a build carries everything it needs, without the game running."""
+    global log_level, log_to_file
+    log_level, log_to_file = 1, False
+    print(f"build      : {'packaged exe' if FROZEN else 'source tree'}")
+    print(f"data dir   : {ROOT}       (setting.ini, genshinfishing.log)")
+    print(f"assets     : {ASSETS}")
+    ok = True
+
+    res = sorted(d for d in glob.glob(os.path.join(ASSETS, "*"))
+                 if os.path.isdir(d) and os.path.basename(d)[0].isdigit())
+    print(f"resolutions: {len(res)} ({', '.join(os.path.basename(d) for d in res)})")
+    ok &= len(res) > 0
+
+    try:
+        t = load_templates(os.path.join(ASSETS, "19201080"))
+        print(f"1080p templates: {len(t)} ({', '.join(sorted(t))})")
+        ok &= {"ready", "reel", "casting", "btn_startfishing",
+               "menu_confirm", "menu_cancel"} <= set(t)
+    except Exception as e:
+        print(f"1080p templates: FAILED ({e})")
+        ok = False
+
+    arts, fish = load_bait_arts(), load_fish_refs()
+    print(f"bait art   : {len(arts)}")
+    print(f"fish icons : {len(fish)}")
+    ok &= len(arts) >= 11 and len(fish) >= 45
+
+    cfg = read_config()
+    where = "setting.ini" if os.path.exists(os.path.join(ROOT, "setting.ini")) \
+        else "defaults (no setting.ini next to me)"
+    print(f"config     : {where}")
+    print("             " + ", ".join(f"{k}={v}" for k, v in sorted(cfg.items())))
+
+    admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+    print(f"elevated   : {admin}" + ("" if admin else "   <- clicks will be ignored"))
+    print("\nself-test " + ("PASSED" if ok else "FAILED"))
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--test-frames", help="run detection on a directory of PNG frames")
+    ap.add_argument("--selftest", action="store_true",
+                    help="check assets and config load, then exit")
     args = ap.parse_args()
+    if args.selftest:
+        sys.exit(run_selftest())
     if args.test_frames:
         sys.exit(run_test(args.test_frames))
     run_live()

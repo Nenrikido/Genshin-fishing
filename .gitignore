@@ -1,7 +1,10 @@
 .idea
 screenshots
 *.ini
+!setting.ini.example
 *.log
 *.exe
-**/__pycache__/*.pyc
+**/__pycache__/
 *.mp4
+build/
+dist/

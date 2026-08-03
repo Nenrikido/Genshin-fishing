@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import ctypes.wintypes
+import math
 import sys
 import time
 
@@ -23,9 +25,6 @@ import cv2
 import numpy as np
 
 REGION = (420, 150, 1700, 900)       # search window (excludes HUD margins)
-ALIGN_TOLERANCE = 26                 # px error considered "aimed"
-PROBE_MOVE = (60, 30)                # first move used to measure the gain
-MAX_STEP = 220                       # max injected movement per iteration
 RING_MIN, RING_MAX = 24, 130         # ring width, near..far cast
 
 
@@ -44,17 +43,66 @@ class _Input(ctypes.Structure):
 
 
 def send_relative(dx: int, dy: int) -> None:
-    """Inject a relative mouse move the game reads as camera turn.
+    """Inject one relative mouse move (MOUSEEVENTF_MOVE).
 
-    SendInput rather than the older mouse_event: same MOUSEEVENTF_MOVE, but
-    it is the path the rest of the bot's clicks already take and it is not
-    subject to mouse_event's message coalescing.
+    SendInput rather than the older mouse_event: same flag, but it is the
+    path the rest of the bot's clicks already take and it is not subject to
+    mouse_event's message coalescing.
     """
     if dx == 0 and dy == 0:
         return
     inp = _Input(type=0)
     inp.mi = _MouseInput(int(dx), int(dy), 0, 0x0001, 0, None)
     ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_Input))
+
+
+def send_relative_smooth(dx: int, dy: int, duration=0.08, max_step=8) -> None:
+    """Deliver a turn as a stream of small deltas instead of one jump.
+
+    A real mouse arrives as many small deltas across many frames; the game
+    samples it per frame and can clamp or smooth away a single large one. One
+    lump also drags the OS cursor to a screen edge in a single step, and past
+    the edge every further move the same way does nothing - which is what
+    made 3000-unit turns look like the game was ignoring input entirely.
+
+    Splitting keeps every delta small enough to survive that, and lets the
+    caller notice the cursor drifting before it pins.
+    """
+    dx, dy = int(dx), int(dy)
+    if dx == 0 and dy == 0:
+        return
+    n = max(1, int(math.ceil(max(abs(dx), abs(dy)) / float(max_step))))
+    pause = duration / n
+    sent_x = sent_y = 0
+    for i in range(1, n + 1):
+        # integer split that still adds up to exactly (dx, dy)
+        want_x, want_y = round(dx * i / n), round(dy * i / n)
+        send_relative(want_x - sent_x, want_y - sent_y)
+        sent_x, sent_y = want_x, want_y
+        if pause:
+            time.sleep(pause)
+
+
+def cursor_pos():
+    pt = ctypes.wintypes.POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y
+
+
+# Both take the game's client rect on screen, not the desktop: the game clips
+# the cursor to its own window, and on a multi-monitor desktop the primary
+# screen's bounds are the wrong thing entirely.
+def cursor_near_edge(rect, margin=250):
+    """True when the cursor has drifted far enough to risk being clamped."""
+    left, top, w, h = rect
+    x, y = cursor_pos()
+    return not (left + margin < x < left + w - margin
+                and top + margin < y < top + h - margin)
+
+
+def center_cursor(rect):
+    left, top, w, h = rect
+    ctypes.windll.user32.SetCursorPos(left + w // 2, top + h // 2)
 
 
 def bright_mask(img: np.ndarray) -> np.ndarray:
