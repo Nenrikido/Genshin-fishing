@@ -1,22 +1,16 @@
 #!/usr/bin/env python3
-"""Closed-loop cast aiming for the fishing script (1920x1080).
+"""Cast-aiming primitives for the fishing bot (1920x1080).
 
-While the AutoHotkey script HOLDS the left mouse button (aim mode), this tool
-repeatedly: grabs the screen, locates the white elliptical landing reticle on
-the water, and injects relative mouse movement to steer it toward the target
-fish position, stopping `--offset` px short (landing on the fish scares it).
-The AutoHotkey script releases the button afterwards to cast.
+genshin_fishing.aim_and_cast drives the loop; this module supplies the two
+pieces it needs: locating the landing reticle, and injecting relative mouse
+movement that the game reads as camera turn.
 
-The mouse-to-reticle gain is measured on the first iteration (a small probe
-move), so no manual gain calibration is needed. Exit code 0 = aligned,
-2 = reticle never found (not in aim mode?), 3 = timeout without alignment.
-
-The reticle detector was validated on frames of the project's demo video
-(https://www.youtube.com/watch?v=3lvCEh7quxE): a ring of bright, slightly
-blue-tinted pixels forming a wide ellipse (~44..100 px wide depending on
-distance), detected by convolving the bright-pixel mask with ellipse-ring
-kernels and requiring near-complete angular coverage with a hollow interior
-(rejects text, the rod line, sparkles and the player character).
+The reticle is the trajectory preview: a long bright line arcing down to a
+flat hollow ring on the water. Both are found as one connected component of
+bright pixels - tall, thin along its length, ending in a row whose horizontal
+*extent* is wide while its pixel *count* stays low. That hollowness is what
+separates the ring from anything solid and bright (the player character, the
+HUD, sun glare), so no exclusion boxes are needed.
 """
 from __future__ import annotations
 
@@ -28,25 +22,39 @@ import time
 import cv2
 import numpy as np
 
-REGION = (600, 150, 1650, 860)       # search window (excludes HUD margins)
-PLAYER_BOX = (860, 440, 1060, 920)   # the player character, always excluded
+REGION = (420, 150, 1700, 900)       # search window (excludes HUD margins)
 ALIGN_TOLERANCE = 26                 # px error considered "aimed"
 PROBE_MOVE = (60, 30)                # first move used to measure the gain
 MAX_STEP = 220                       # max injected movement per iteration
+RING_MIN, RING_MAX = 24, 130         # ring width, near..far cast
+
+
+class _MouseInput(ctypes.Structure):
+    _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long),
+                ("mouseData", ctypes.c_ulong), ("dwFlags", ctypes.c_ulong),
+                ("time", ctypes.c_ulong),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+
+class _Input(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("mi", _MouseInput)]
+    _anonymous_ = ("u",)
+    _fields_ = [("type", ctypes.c_ulong), ("u", _U)]
 
 
 def send_relative(dx: int, dy: int) -> None:
-    """Inject a relative mouse move (MOUSEEVENTF_MOVE); the game reads it."""
+    """Inject a relative mouse move the game reads as camera turn.
+
+    SendInput rather than the older mouse_event: same MOUSEEVENTF_MOVE, but
+    it is the path the rest of the bot's clicks already take and it is not
+    subject to mouse_event's message coalescing.
+    """
     if dx == 0 and dy == 0:
         return
-    ctypes.windll.user32.mouse_event(0x0001, int(dx), int(dy), 0, 0)
-
-
-def grab_screen() -> np.ndarray:
-    from PIL import ImageGrab
-
-    im = ImageGrab.grab()
-    return cv2.cvtColor(np.array(im), cv2.COLOR_RGB2BGR)
+    inp = _Input(type=0)
+    inp.mi = _MouseInput(int(dx), int(dy), 0, 0x0001, 0, None)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_Input))
 
 
 def bright_mask(img: np.ndarray) -> np.ndarray:
@@ -56,122 +64,66 @@ def bright_mask(img: np.ndarray) -> np.ndarray:
     return m.astype(np.uint8)
 
 
-def sector_coverage(dil, cx, cy, a, b_ax) -> int:
-    hits = 0
-    for k in range(16):
-        got = 0
-        for t in np.linspace(2 * np.pi * k / 16, 2 * np.pi * (k + 1) / 16, 5):
-            x = int(round(cx + a * np.cos(t)))
-            y = int(round(cy + b_ax * np.sin(t)))
-            if 0 <= y < dil.shape[0] and 0 <= x < dil.shape[1] and dil[y, x]:
-                got += 1
-        if got >= 2:
-            hits += 1
-    return hits
-
-
-def interior_fraction(dil, cx, cy, a, b_ax) -> float:
-    ia, ib = int(a * 0.55), max(2, int(b_ax * 0.55))
-    tot = wh = 0
-    for y in range(max(0, cy - ib), min(dil.shape[0], cy + ib + 1)):
-        for x in range(max(0, cx - ia), min(dil.shape[1], cx + ia + 1)):
-            dx, dy = x - cx, y - cy
-            # the cast line drops through the center; ignore that column
-            if (dx / ia) ** 2 + (dy / ib) ** 2 <= 1 and abs(dx) > 6:
-                tot += 1
-                wh += dil[y, x]
-    return wh / max(tot, 1)
+def _ring_row(comp: np.ndarray, lo: int):
+    """Widest-extent row at or below `lo` -> (extent, count, row, centre_x)."""
+    best = None
+    for r in range(lo, comp.shape[0]):
+        cols = np.where(comp[r])[0]
+        if len(cols) < 2:
+            continue
+        ext = int(cols.max() - cols.min() + 1)
+        if best is None or ext > best[0]:
+            best = (ext, int(len(cols)), r, int((cols.min() + cols.max()) // 2))
+    return best
 
 
 def find_reticle(img: np.ndarray, region=REGION):
+    """Centre of the cast landing ring, or None if the preview is not up.
+
+    Reliable in daylight (21/21 on the recorded aim frames) but not at night,
+    where the ring is dim and turns pink once the landing spot is invalid: it
+    finds ~1 frame in 9 there. It also fires on bright menu panels, so only
+    call it on frames where a cast is actually being aimed. The bot does not
+    steer by it - aiming turns the camera and measures the world - this is
+    for checking where a cast lands, e.g. to calibrate `aim_x_px`.
+    """
     x0, y0, x1, y1 = region
-    m = bright_mask(img)
-    px0, py0, px1, py1 = PLAYER_BOX
-    m[py0:py1, px0:px1] = 0
-    m = m[y0:y1, x0:x1]
-    dil = cv2.dilate(m, np.ones((3, 3), np.uint8))
-    dilf = dil.astype(np.float32)
+    m = bright_mask(img)[y0:y1, x0:x1]
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(m, 8)
     best = None
-    for a in (22, 26, 30, 34, 38, 44, 50):
-        for ratio in (2.4, 2.9, 3.4):
-            b_ax = max(6, a / ratio)
-            h, w = int(b_ax * 2 + 5), int(a * 2 + 5)
-            ring = np.zeros((h, w), np.float32)
-            for t in np.linspace(0, 2 * np.pi, 240, endpoint=False):
-                cv2.circle(ring, (int(round(w // 2 + a * np.cos(t))),
-                                  int(round(h // 2 + b_ax * np.sin(t)))), 1, 1.0, -1)
-            ring /= ring.sum()
-            resp = cv2.filter2D(dilf, -1, ring)
-            for _ in range(3):
-                _, mx, _, pt = cv2.minMaxLoc(resp)
-                if mx < 0.55:
-                    break
-                cx, cy = pt
-                cov = max(sector_coverage(dil, cx + jx, cy + jy, a, b_ax)
-                          for jx in (-2, 0, 2) for jy in (-1, 0, 1))
-                if cov >= 13 and interior_fraction(dil, cx, cy, a, b_ax) < 0.30:
-                    score = mx + cov / 32
-                    if best is None or score > best[0]:
-                        best = (score, x0 + cx, y0 + cy)
-                cv2.circle(resp, pt, 30, 0, -1)
-    return None if best is None else (best[1], best[2])
+    for i in range(1, n):
+        x, y, w, h, _ = stats[i]
+        if h < 60 or not (20 <= w <= 400):
+            continue
+        comp = lab[y:y + h, x:x + w] == i
+        lo = max(0, h - 26)
+        ring = _ring_row(comp, lo)
+        if ring is None:
+            continue
+        ext, cnt, ry, cx = ring
+        # a ring is wide but mostly empty across; anything solid is not one
+        if not (RING_MIN <= ext <= RING_MAX) or cnt > ext * 0.65:
+            continue
+        # and the line feeding into it is thin
+        stem = [int(np.count_nonzero(comp[r]))
+                for r in range(max(0, lo - 40), max(1, lo - 8))]
+        if stem and np.median(stem) > 14:
+            continue
+        if best is None or h + ext > best[0]:
+            best = (h + ext, x0 + x + cx, y0 + y + ry)
+    return None if best is None else (int(best[1]), int(best[2]))
 
 
 def main() -> int:
+    """Preview the detector on a screenshot: `python -m tools.aim_cast <png>`."""
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fish-x", type=int, required=True)
-    ap.add_argument("--fish-y", type=int, required=True)
-    ap.add_argument("--offset", type=int, default=110,
-                    help="land this many px short of the fish")
-    ap.add_argument("--timeout", type=float, default=8.0)
+    ap.add_argument("images", nargs="+")
     args = ap.parse_args()
-
-    deadline = time.time() + args.timeout
-    gain_x = gain_y = None
-    prev = None
-    found_once = False
-
-    while time.time() < deadline:
-        pos = find_reticle(grab_screen())
-        if pos is None:
-            if not found_once:
-                time.sleep(0.25)
-                continue
-            time.sleep(0.15)
-            continue
-        found_once = True
-
-        # target: offset px short of the fish, along reticle->fish direction
-        dx_f = args.fish_x - pos[0]
-        dy_f = args.fish_y - pos[1]
-        dist = max((dx_f * dx_f + dy_f * dy_f) ** 0.5, 1.0)
-        cut = min(args.offset, dist) / dist
-        err_x = dx_f * (1 - cut)
-        err_y = dy_f * (1 - cut)
-        print(f"reticle={pos} err=({err_x:.0f},{err_y:.0f})", flush=True)
-
-        if abs(err_x) <= ALIGN_TOLERANCE and abs(err_y) <= ALIGN_TOLERANCE:
-            return 0
-
-        if gain_x is None:
-            if prev is None:
-                prev = pos
-                send_relative(*PROBE_MOVE)
-                time.sleep(0.20)
-                continue
-            moved_x, moved_y = pos[0] - prev[0], pos[1] - prev[1]
-            gain_x = PROBE_MOVE[0] / moved_x if abs(moved_x) > 4 else 1.0
-            gain_y = PROBE_MOVE[1] / moved_y if abs(moved_y) > 4 else gain_x
-            gain_x = max(-8, min(8, gain_x))
-            gain_y = max(-8, min(8, gain_y))
-            print(f"gain=({gain_x:.2f},{gain_y:.2f})", flush=True)
-
-        mx = int(max(-MAX_STEP, min(MAX_STEP, err_x * gain_x * 0.8)))
-        my = int(max(-MAX_STEP, min(MAX_STEP, err_y * gain_y * 0.8)))
-        send_relative(mx, my)
-        time.sleep(0.18)
-
-    return 3 if found_once else 2
+    for path in args.images:
+        img = cv2.imread(path)
+        print(f"{path}: {find_reticle(img) if img is not None else 'unreadable'}")
+    return 0
 
 
 if __name__ == "__main__":

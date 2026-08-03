@@ -28,11 +28,16 @@ non-elevated process. Press **F5** to quit.
 Walk to a fishing point and press **F** to open *Prepare to Fish* — the bot
 takes over from there:
 
-1. reads the **Fish Present** icons and picks the bait most of them want
-2. selects that bait and clicks **Start Fishing**
-3. scans the water, aims the cast at a fish and casts
+1. reads the equipped bait and the **Fish Present** icons, and picks the bait
+   most of them want
+2. selects that bait if it differs, then clicks **Start Fishing**
+3. scans the water, turns the camera until a fish is under the cast, casts
 4. hooks the bite and plays the tension-bar minigame
 5. recasts, and swaps bait if the fish it targets are fished out
+
+Fish the game draws as plain silhouettes — species you have not caught yet —
+carry no colour to identify, so they are ignored rather than guessed at. If
+nothing is identified confidently the equipped bait is simply kept.
 
 Everything happens inside fishing mode; changing bait uses the in-game
 right-click *change bait* button, so the bot never has to leave.
@@ -47,6 +52,16 @@ Runs state and tension-bar detection over saved frames (e.g. extracted from a
 recording) and prints what it would have done. Handy for diagnosing a bad run
 without the game open.
 
+To check where a cast actually lands — the number behind `aim_x_px` — take a
+screenshot while the trajectory preview is up and run:
+
+```
+python -m tools.aim_cast shot.png
+```
+
+It prints the landing ring's screen position. Daylight only; at night the
+ring is too dim to find reliably.
+
 ## setting.ini
 
 Read as UTF-16. All keys are optional; defaults shown.
@@ -60,11 +75,12 @@ Read as UTF-16. All keys are optional; defaults shown.
 | | `aim` | `1` | steer the cast onto a fish (else cast straight ahead) |
 | | `rebait` | `1` | swap bait when the targeted fish are gone |
 | | `rebait_min_fish` | `2` | fish of another kind needed before swapping |
-| | `cast_hold_ms` | `600` | how long the cast is charged |
+| | `cast_hold_ms` | `600` | how long the cast is charged — this sets the distance |
 | | `cast_cooldown_s` | `5` | minimum gap between casts |
 | | `bite_timeout_s` | `35` | reel in and recast if nothing bites |
-| | `aim_offset_px` | `110` | land this far short of the fish |
-| | `aim_timeout_s` | `8` | give up aiming and cast anyway |
+| | `aim_x_px` | `995` | screen x the cast lands on; aiming turns until the fish reaches it |
+| | `aim_tolerance_px` | `45` | close enough, stop turning |
+| | `aim_timeout_s` | `6` | give up aiming and cast anyway |
 
 ## Scope
 

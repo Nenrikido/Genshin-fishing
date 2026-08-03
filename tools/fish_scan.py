@@ -49,6 +49,9 @@ MOTION_INTERVAL = 0.6      # seconds between captured frames
 MAX_FISH = 5
 MIN_FAMILY_PIXELS = 60     # blob must contain at least this many family pixels
 MIN_FAMILY_FRAC = 0.12
+# A blob that looks like the water around it is a ripple, not a fish.
+MIN_CONTRAST_V = 12
+MIN_CONTRAST_S = 30
 
 # Coarse color family -> bait. OpenCV hue is 0..179. These are heuristics:
 # gold/metallic = maintenance meks, pale = medaka family, red = betta family,
@@ -152,15 +155,30 @@ def detect_fish(image: np.ndarray, motion: np.ndarray | None = None,
         blob = np.zeros((bh, bw), np.uint8)
         cv2.drawContours(blob, [c - [bx, by]], -1, 255, -1)
         pixels = hsv[by:by + bh, bx:bx + bw][blob > 0]
+
+        # compare the blob against the water ringing it
+        ex, ey = max(bw, 20), max(bh, 20)
+        ox0, oy0 = max(0, bx - ex), max(0, by - ey)
+        ox1, oy1 = min(hsv.shape[1], bx + bw + ex), min(hsv.shape[0], by + bh + ey)
+        ring = hsv[oy0:oy1, ox0:ox1].reshape(-1, 3)
+        d_v = float(np.median(pixels[:, 2]) - np.median(ring[:, 2]))
+        d_s = float(np.median(pixels[:, 1]) - np.median(ring[:, 1]))
+        if abs(d_v) < MIN_CONTRAST_V and abs(d_s) < MIN_CONTRAST_S:
+            continue
+
         family = classify(pixels)
         fishes.append({
             "x": bx + bw // 2, "y": by + bh // 2, "area": int(area),
             "family": family[0] if family else "unknown",
             "bait": family[1] if family else "",
+            # how far the blob's brightness sits from the water around it:
+            # negative for a submerged silhouette, positive for a bright koi.
+            # Either way it beats area, which just favours big scenery.
+            "contrast": d_v,
         })
 
-    # classified fish first, biggest first
-    fishes.sort(key=lambda f: (f["bait"] == "", -f["area"]))
+    # classified fish first, then the blobs least like water, then biggest
+    fishes.sort(key=lambda f: (f["bait"] == "", -abs(f["contrast"]), -f["area"]))
     fishes = fishes[:MAX_FISH * 3]
 
     if debug_path:
@@ -168,10 +186,11 @@ def detect_fish(image: np.ndarray, motion: np.ndarray | None = None,
         cv2.rectangle(dbg, (x0, y0), (x1, y1), (80, 80, 80), 1)
         for ex0, ey0, ex1, ey1 in EXCLUDE_BOXES:
             cv2.rectangle(dbg, (ex0, ey0), (ex1, ey1), (0, 0, 128), 1)
-        for f in fishes:
+        for rank, f in enumerate(fishes):
             color = (0, 255, 0) if f["bait"] else (0, 165, 255)
             cv2.circle(dbg, (f["x"], f["y"]), 18, color, 2)
-            cv2.putText(dbg, f'{f["family"]} {f["area"]}', (f["x"] - 30, f["y"] - 24),
+            cv2.putText(dbg, f'#{rank} {f["family"]} c={f["contrast"]:.0f}',
+                        (f["x"] - 30, f["y"] - 24),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
         cv2.imwrite(debug_path, dbg)
     return fishes

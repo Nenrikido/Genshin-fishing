@@ -14,6 +14,7 @@ import argparse
 import ctypes
 import ctypes.wintypes as wt
 import glob
+import math
 import os
 import sys
 import time
@@ -69,15 +70,32 @@ FISH_BAIT = {
     "neonmaulershark": "refreshinglakkabait",
 }
 
-# "Fish Present" row in the Prepare to Fish panel, at 1080p
+# "Fish Present" row in the Prepare to Fish panel, at 1080p. The row holds
+# between one and five tiles and is centred, so their x depends on how many
+# there are - locate_fish_slots() reads the actual tiles off the frame.
 FISH_SLOT_Y = (432, 520)
-FISH_SLOT_X0, FISH_SLOT_STEP, FISH_SLOT_W = 1231, 113, 90
+FISH_SLOT_STEP, FISH_SLOT_W = 113, 94
+FISH_MATCH_MAX = -0.45             # icon_similarity above this is a guess
+FISH_ROW_X = (1110, 1900)          # the "Fish Present" box
+FISH_ROW_CENTER = 1501             # tiles are centred on this
 
 # "Select Bait" tile in the Prepare to Fish panel (opens the bait dialog)
 BAIT_TILE = (1643, 795)
 # Bait cards live in a centred row in that dialog; buttons sit below it
 BAIT_CARD_REGION = (460, 300, 1460, 720)
 BAIT_BUTTON_REGION = (400, 680, 1600, 830)
+BAIT_CARD_Y = (432, 600)           # the card row inside that region
+BAIT_CARD_STEP, BAIT_CARD_W = 139, 123
+BAIT_ROW_CENTER = 959              # cards are centred on this, 1..5 of them
+BAIT_TEMPLATE_SIZE = 84            # matched crop, centred on the icon
+# The on-screen size a bait icon renders at depends on how much padding its
+# reference art carries, not on anything about the dialog: measured 98 for
+# fruitpaste and 126 for sugardew in the same layout. So sweep the scale
+# rather than shipping a few fixed guesses.
+BAIT_ICON_SIZES = range(96, 131, 2)
+BAIT_EDGE_MASK = 56                # local contrast above this gets fuchsia-masked
+# The panel shows the bait actually on the rod, at the same icon scale
+BAIT_PANEL_TILE = (1580, 730, 1710, 860)
 
 # ImageSearch variation thresholds (max abs channel diff on masked pixels),
 # same values as the AHK script
@@ -85,7 +103,13 @@ VAR_STATE = 32
 # "Start Fishing" button: true matches <=40 across two sessions, false floor >=80
 VAR_PANEL = 50
 # bait icons: true matches <=48, false floor >=101 (measured when cut)
-VAR_BAIT = 60
+# Bait cards: with the scale swept, the worst true match measured needs 86
+# while no absent bait matched below 100 on any labelled dialog.
+VAR_BAIT = 92
+# Reading the equipped bait off the panel is a 1-of-11 guess with nothing to
+# fall back on, so it is held to a much tighter fit: correct matches measured
+# 38-40, the best wrong one 118.
+VAR_BAIT_EQUIPPED = 70
 # Cancel/Confirm in the bait dialog match near-exactly
 VAR_MENU = 30
 
@@ -220,16 +244,17 @@ class Mouse:
 # ------------------------------------------------------------- templates ----
 
 class Template:
-    def __init__(self, path):
-        img = cv2.imread(path, cv2.IMREAD_COLOR)
+    def __init__(self, path, img=None, name=None):
         if img is None:
-            raise FileNotFoundError(path)
+            img = cv2.imread(path, cv2.IMREAD_COLOR)
+            if img is None:
+                raise FileNotFoundError(path)
         self.bgr = img
         # fuchsia (BGR 255,0,255) marks transparent pixels
         self.mask = ~((img[:, :, 0] == 255) & (img[:, :, 1] == 0) & (img[:, :, 2] == 255))
         self.mask_u8 = self.mask.astype(np.uint8) * 255
         self.h, self.w = img.shape[:2]
-        self.name = os.path.basename(path)
+        self.name = name or os.path.basename(path)
 
 
 def load_fish_refs(size=96):
@@ -259,21 +284,45 @@ def load_templates(res_dir):
     for name in ("ready", "reel", "casting"):
         t[name] = Template(os.path.join(res_dir, name + ".png"))
     # only cut for 1080p so far; without them those steps stay manual
-    optional = ["btn_startfishing", "menu_confirm", "menu_cancel"]
-    optional += [os.path.splitext(os.path.basename(p))[0]
-                 for p in glob.glob(os.path.join(res_dir, "bait_*.png"))]
-    for name in optional:
+    for name in ("btn_startfishing", "menu_confirm", "menu_cancel"):
         p = os.path.join(res_dir, name + ".png")
         if os.path.exists(p):
             t[name] = Template(p)
     return t
 
 
-def search(scene, tmpl, x0, y0, x1, y1, variation):
-    """AHK-ImageSearch-like: find tmpl in scene[y0:y1, x0:x1].
+def load_bait_arts():
+    """game8 bait card art, scaled to screen size on demand by Bot."""
+    arts = {}
+    for p in glob.glob(os.path.join(ROOT, "assets", "references", "bait", "*.png")):
+        img = cv2.imread(p, cv2.IMREAD_COLOR)
+        if img is not None:
+            arts[os.path.splitext(os.path.basename(p))[0]] = img
+    return arts
 
-    Returns (x, y) of the template's top-left in scene coords, or None.
-    Candidate via masked TM_SQDIFF, then exact max-channel-diff verify.
+
+def build_bait_template(art, icon_size):
+    """Reference art rendered at `icon_size`, cropped and edge-masked.
+
+    Sub-pixel differences between our resize and the game's renderer pile up
+    on high-contrast edges, so those pixels are masked out rather than
+    compared.
+    """
+    scaled = cv2.resize(art, (icon_size, icon_size), interpolation=cv2.INTER_CUBIC)
+    m = (icon_size - BAIT_TEMPLATE_SIZE) // 2
+    crop = scaled[m:m + BAIT_TEMPLATE_SIZE, m:m + BAIT_TEMPLATE_SIZE].copy()
+    k = np.ones((3, 3), np.uint8)
+    contrast = (cv2.dilate(crop, k).astype(int)
+                - cv2.erode(crop, k).astype(int)).max(axis=2)
+    crop[contrast > BAIT_EDGE_MASK] = (255, 0, 255)
+    return crop
+
+
+def match_score(scene, tmpl, x0, y0, x1, y1):
+    """Best placement of tmpl in scene[y0:y1, x0:x1] -> (x, y, worst diff).
+
+    Candidate via masked TM_SQDIFF, then the exact max-channel difference
+    AHK's ImageSearch compares against its *variation.
     """
     x0 = max(0, x0); y0 = max(0, y0)
     x1 = min(scene.shape[1], x1); y1 = min(scene.shape[0], y1)
@@ -286,8 +335,14 @@ def search(scene, tmpl, x0, y0, x1, y1, variation):
     mx, my = minloc
     win = region[my:my + tmpl.h, mx:mx + tmpl.w].astype(np.int16)
     diff = np.abs(win - tmpl.bgr.astype(np.int16)).max(axis=2)
-    if diff[tmpl.mask].max() <= variation:
-        return x0 + mx, y0 + my
+    return x0 + mx, y0 + my, int(diff[tmpl.mask].max())
+
+
+def search(scene, tmpl, x0, y0, x1, y1, variation):
+    """(x, y) of tmpl's top-left in scene coords if it matches, else None."""
+    hit = match_score(scene, tmpl, x0, y0, x1, y1)
+    if hit is not None and hit[2] <= variation:
+        return hit[0], hit[1]
     return None
 
 
@@ -308,15 +363,17 @@ class Capture:
 class Bot:
     def __init__(self, templates, win_w, win_h):
         self.t = templates
+        self.bait_arts = load_bait_arts()
+        self._bait_tpl = {}
         self.w = win_w
         self.h = win_h
         self.dline = int(np.ceil((win_w ** 2 + win_h ** 2) ** 0.5))
         d = self.dpt
-        # same geometry as the AHK script
-        self.barR = (d(0.27), d(0.03), d(0.59), d(0.1))
-        self.delta = (d(0.025), d(0.005), d(0.035), d(0.014))  # l, t, r, b
-        self.barS_left = d(0.22)
-        self.barS_right = d(0.64)
+        # The tension-bar track is centred on the screen and its width is
+        # fixed (measured at 720..1199 on 1080p). Searching only inside it
+        # keeps sunlit scenery out of the yellow mask entirely.
+        self.bar_left = win_w // 2 - d(0.113)
+        self.bar_right = win_w // 2 + d(0.113)
         self.icon_region = (win_w - d(0.222), win_h - d(0.084), win_w, win_h)
         self.reset()
 
@@ -331,21 +388,55 @@ class Bot:
         self.panel_started = False
         self.panel_gone = 0
         self.wanted_bait = None
+        self.rejected_baits = set()
         self.reset_fight()
 
     def reset_fight(self):
         self.bar_seen = False
         self.bar_misses = 0
-        self.zone_w = 150.0 * self.dline / 2202.0
         self.left_x_old = self.right_x_old = self.cur_x_old = None
         self.left_fresh = self.cur_fresh = False
         self.left_pred = self.right_pred = self.cur_pred = 0
 
+    @staticmethod
+    def locate_fish_slots(frame):
+        """x of each 'Fish Present' tile, read off the frame.
+
+        The row is centred, so a fixed five-slot grid lands half a tile off
+        whenever the point holds four fish - which is most of them. The tiles
+        are lighter than the box behind them, so a column-brightness profile
+        finds their edges directly.
+        """
+        x0, x1 = FISH_ROW_X
+        band = frame[FISH_SLOT_Y[0] - 2:FISH_SLOT_Y[1] + 5, x0:x1]
+        if band.shape[0] < 10 or band.shape[1] < 100:
+            return []
+        v = band.astype(np.float32).mean(axis=2).mean(axis=0)
+        lit = np.where(v > np.percentile(v, 20) + 6)[0]
+        runs = []
+        if len(lit):
+            start = prev = lit[0]
+            for x in lit[1:]:
+                if x - prev > 4:
+                    runs.append((start, prev))
+                    start = x
+                prev = x
+            runs.append((start, prev))
+        runs = [r for r in runs if r[1] - r[0] > 30]
+        if not runs:
+            return []
+        left, right = runs[0][0] + x0, runs[-1][1] + x0
+        n = int(round((right - left - FISH_SLOT_W) / FISH_SLOT_STEP)) + 1
+        n = max(1, min(5, n))
+        # trust the count, not the measured edge: a dark fish clips its tile
+        left = FISH_ROW_CENTER - (n * FISH_SLOT_STEP - (FISH_SLOT_STEP -
+                                                        FISH_SLOT_W)) // 2
+        return [left + i * FISH_SLOT_STEP for i in range(n)]
+
     def read_fish_present(self, frame, refs, size=96):
-        """Identify the 5 'Fish Present' icons -> [(fish, bait, score)]."""
+        """Identify the 'Fish Present' icons -> [(fish, bait, score)]."""
         out = []
-        for i in range(5):
-            x = FISH_SLOT_X0 + i * FISH_SLOT_STEP
+        for x in self.locate_fish_slots(frame):
             crop = frame[FISH_SLOT_Y[0]:FISH_SLOT_Y[1], x:x + FISH_SLOT_W]
             if crop.shape[0] < 10 or crop.shape[1] < 10:
                 continue
@@ -360,10 +451,16 @@ class Bot:
         return out
 
     def choose_bait(self, fish):
-        """Most common bait among the fish present; ties go to the best match."""
+        """Most common bait among the fish present; ties go to the best match.
+
+        Slots the game draws as plain silhouettes - fish not yet caught - hold
+        no colour to match on and score around -0.2 to -0.35, against -0.5 and
+        better for a real identification. Guessing from those is worse than
+        not recommending anything, which just leaves the current bait on.
+        """
         by_bait = {}
         for name, bait, sc in fish:
-            if bait is None:
+            if bait is None or sc > FISH_MATCH_MAX:
                 continue
             n, best = by_bait.get(bait, (0, 0.0))
             by_bait[bait] = (n + 1, min(best, sc))
@@ -381,7 +478,7 @@ class Bot:
         counts = {}
         for f in fish:
             b = f.get("bait")
-            if b:
+            if b and b not in self.rejected_baits:
                 counts[b] = counts.get(b, 0) + 1
         if not counts:
             return None
@@ -401,25 +498,90 @@ class Bot:
         hit = search(frame, t, *BAIT_BUTTON_REGION, VAR_MENU)
         return None if hit is None else (hit[0] + t.w // 2, hit[1] + t.h // 2)
 
-    def find_bait_card(self, frame, bait):
-        """-> (centre, already_selected) for a bait in the dialog, else (None, False).
+    @staticmethod
+    def locate_bait_cards(frame):
+        """Centre x of each card in the Select Bait dialog (1..5, centred)."""
+        y0, y1 = BAIT_CARD_Y
+        band = frame[y0 - 2:y1, 400:1520]
+        if band.shape[0] < 20:
+            return []
+        v = band.astype(np.float32).mean(axis=2).mean(axis=0)
+        lit = np.where(v > np.percentile(v, 30) + 12)[0]
+        runs = []
+        if len(lit):
+            s = p = lit[0]
+            for x in lit[1:]:
+                if x - p > 5:
+                    runs.append((s + 400, p + 400))
+                    s = x
+                p = x
+            runs.append((s + 400, p + 400))
+        runs = [r for r in runs if r[1] - r[0] > 40]
+        if not runs:
+            return []
+        # a selected card glows past its own edge, so derive the count from
+        # the span and then place the cards on the exact centred grid
+        span = runs[-1][1] - runs[0][0]
+        n = max(1, min(5, int(round((span - BAIT_CARD_W) / BAIT_CARD_STEP)) + 1))
+        return [int(BAIT_ROW_CENTER + (i - (n - 1) / 2) * BAIT_CARD_STEP)
+                for i in range(n)]
 
-        The selected card renders zoomed, hence the separate _sel template;
-        _b/_c are scale variants because the in-game icon scale is fractional.
+    def bait_template(self, bait, size):
+        key = (bait, size)
+        t = self._bait_tpl.get(key)
+        if t is None:
+            art = self.bait_arts.get(bait)
+            if art is None:
+                return None
+            t = Template(None, build_bait_template(art, size), f"{bait}@{size}")
+            self._bait_tpl[key] = t
+        return t
+
+    def read_equipped_bait(self, frame):
+        """Which bait the Prepare panel shows on the rod, or None if unsure.
+
+        Without this the bot has no idea what it is fishing with whenever a
+        water body refuses its choice, and then "re-baits" away from a bait
+        it never had.
         """
-        for suf in ("", "_b", "_c"):
-            t = self.t.get(f"bait_{bait}{suf}")
-            if t is None:
-                continue
-            hit = search(frame, t, *BAIT_CARD_REGION, VAR_BAIT)
-            if hit:
-                return (hit[0] + t.w // 2, hit[1] + t.h // 2), False
-        t = self.t.get(f"bait_{bait}_sel")
-        if t is not None:
-            hit = search(frame, t, *BAIT_CARD_REGION, VAR_BAIT)
-            if hit:
-                return (hit[0] + t.w // 2, hit[1] + t.h // 2), True
-        return None, False
+        best = None
+        for name in self.bait_arts:
+            for size in BAIT_ICON_SIZES:
+                t = self.bait_template(name, size)
+                hit = match_score(frame, t, *BAIT_PANEL_TILE)
+                if hit and (best is None or hit[2] < best[0]):
+                    best = (hit[2], name)
+        if best is None or best[0] > VAR_BAIT_EQUIPPED:
+            log(f"equipped bait unrecognised (best {best})", 2)
+            return None
+        log(f"equipped bait: {best[1]} (diff {best[0]})", 1)
+        return best[1]
+
+    def find_bait_card(self, frame, bait):
+        """Centre of `bait`'s card in the dialog, or None.
+
+        Searched card by card over a sweep of icon scales: which scale fits
+        depends on the reference art's own padding, so one fixed size can
+        only ever work for the few baits it was calibrated on. The best-
+        scoring card wins rather than the first one over the threshold -
+        several baits are plain coloured balls that pass on each other.
+        """
+        if bait not in self.bait_arts:
+            return None
+        y0, y1 = BAIT_CARD_Y
+        best = None
+        for cx in self.locate_bait_cards(frame):
+            for size in BAIT_ICON_SIZES:
+                t = self.bait_template(bait, size)
+                if t is None:
+                    continue
+                hit = match_score(frame, t, cx - 70, y0 - 6, cx + 70, y1)
+                if hit and hit[2] <= VAR_BAIT and (best is None or hit[2] < best[0]):
+                    best = (hit[2], cx)
+        if best is None:
+            return None
+        log(f"bait '{bait}' card at x={best[1]} (diff {best[0]})", 2)
+        return best[1], (y0 + y1) // 2
 
     def find_start_button(self, frame):
         """Center of the active 'Start Fishing' button, or None.
@@ -468,82 +630,89 @@ class Bot:
             log("state->unknown", 1)
 
     # -- reel minigame: column-profile detector on the tension bar band --
-    # Elements (brackets ◄ ►, cursor I) are tall solid-yellow column clusters;
-    # the zone outline between brackets is only ~4px of fill per column, so a
-    # filled-height threshold separates them. Robust to motion blur, which
-    # broke per-element template matching (~20% cursor hit rate live).
+    # Two fill thresholds separate the two kinds of yellow the UI draws: the
+    # zone is a rounded outline carrying only a few filled pixels per column,
+    # while its end chevrons and the cursor are tall solid glyphs. Reading the
+    # zone from the outline instead of from a pair of glyphs is what makes
+    # this robust - the glyphs merge and split as the cursor slides past a
+    # chevron, and any rule for pairing them fails exactly then.
+    def _runs(self, heights, thr, gap=3):
+        xs = np.where(heights >= thr)[0]
+        if not len(xs):
+            return []
+        runs, start, prev = [], xs[0], xs[0]
+        for x in xs[1:]:
+            if x - prev > gap:
+                runs.append((start, prev))
+                start = x
+            prev = x
+        runs.append((start, prev))
+        return [(int(a) + self.bar_left, int(b) + self.bar_left)
+                for a, b in runs if b - a >= 2]
+
     def detect_bar(self, frame):
-        """Tall golden-yellow column clusters in the tension-bar band.
+        """-> (outline_runs, glyph_runs) of golden-yellow columns in the band.
 
         Hue is the discriminator: the UI gold sits at H~25 (OpenCV units)
         while warm scenery (sunset water, sand) is H<=15, so an RGB
-        "yellowish" test floods with false clusters at sunset. The zone
-        outline contributes only ~4px of fill per column, so a filled-height
-        threshold keeps just the brackets and the cursor.
+        "yellowish" test floods with false runs at sunset.
         """
         y0, y1 = self.dpt(0.04), self.dpt(0.0635)
-        band = frame[y0:y1, self.barS_left:self.barS_right]
+        band = frame[y0:y1, self.bar_left:self.bar_right]
         hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
         H = hsv[:, :, 0].astype(np.int16)
         S = hsv[:, :, 1].astype(np.int16)
         V = hsv[:, :, 2].astype(np.int16)
-        m = (H >= 18) & (H <= 34) & (S > 60) & (V > 180)
-        heights = m.sum(axis=0)
-        min_h = max(8, round(12 * self.dline / 2202))
-        xs = np.where(heights >= min_h)[0]
-        clusters = []
-        if len(xs):
-            start = prev = xs[0]
-            for x in xs[1:]:
-                if x - prev > 3:
-                    clusters.append((start, prev))
-                    start = x
-                prev = x
-            clusters.append((start, prev))
-        return [(int(c0) + self.barS_left, int(c1) + self.barS_left,
-                 int(heights[c0:c1 + 1].max()))
-                for c0, c1 in clusters if c1 - c0 >= 2]
-
-    def interpret_bar(self, clusters):
-        """-> (zone_left, zone_right, cursor_x), any of which may be None.
-
-        The cursor is a full-height "I" while the brackets are shorter
-        chevrons, so the tallest cluster is the cursor. Pairing brackets by a
-        zone-width prior instead picks the wrong pair whenever the cursor
-        escapes past a bracket, which is exactly when steering matters most.
-        """
+        heights = ((H >= 18) & (H <= 34) & (S > 60) & (V > 180)).sum(axis=0)
         s = self.dline / 2202.0
-        if not clusters:
-            return None, None, None
-        if len(clusters) == 1:
-            c0, c1, _ = clusters[0]
-            # a lone wide blob is the zone with the cursor lost inside it
-            if c1 - c0 > 60 * s:
-                return c0, c1, None
-            return None, None, (c0 + c1) // 2
+        return (self._runs(heights, max(2, round(3 * s))),
+                self._runs(heights, max(8, round(12 * s))))
 
-        if len(clusters) >= 3:
-            cur = max(clusters, key=lambda c: c[2])
-            rest = [c for c in clusters if c is not cur]
-            zl, zr = rest[0][0], rest[-1][1]
-            cursor = (cur[0] + cur[1]) // 2
-        else:
-            a, b = clusters
-            wide = 18 * s
-            aw, bw = a[1] - a[0], b[1] - b[0]
-            zl, zr = a[0], b[1]
-            if aw >= wide and aw > bw:
-                cursor = (a[0] + a[1]) // 2   # cursor merged into the left one
-            elif bw >= wide and bw > aw:
-                cursor = (b[0] + b[1]) // 2
+    def interpret_bar(self, outline, glyphs):
+        """-> (zone_left, zone_right, cursor_x), any of which may be None."""
+        s = self.dline / 2202.0
+        edge = 16 * s
+
+        def has_chevron(a, b):
+            # a real zone is capped by solid chevrons; warm scenery is not
+            return any(g[0] <= a + edge and g[1] >= a - 4
+                       or g[1] >= b - edge and g[0] <= b + 4 for g in glyphs)
+
+        zone = None
+        for a, b in outline:                       # widest plausible outline
+            if (40 * s <= b - a <= 320 * s and has_chevron(a, b)
+                    and (zone is None or b - a > zone[1] - zone[0])):
+                zone = (a, b)
+        if zone is None:
+            # bar fading in or out: a single glyph can only be the cursor
+            if len(glyphs) == 1:
+                a, b = glyphs[0]
+                return None, None, (a + b) // 2
+            return None, None, None
+
+        zl, zr = zone
+        merged = 16 * s
+        brackets, free = [], []
+        for a, b in glyphs:
+            if (a <= zl + edge and b >= zl - 4) or (b >= zr - edge and a <= zr + 4):
+                brackets.append((a, b))
             else:
-                cursor = None                 # two bare brackets, cursor hidden
-        self.zone_w = 0.75 * self.zone_w + 0.25 * (zr - zl)
-        return zl, zr, cursor
+                free.append((a, b))
+        if free:
+            # more than one loose glyph is rare; trust the nearer to last time
+            ref = self.cur_x_old if self.cur_x_old is not None else (zl + zr) // 2
+            a, b = min(free, key=lambda t: abs((t[0] + t[1]) // 2 - ref))
+            return zl, zr, (a + b) // 2
+        if brackets:
+            # cursor sitting on a chevron widens it well past a bare one
+            a, b = max(brackets, key=lambda t: t[1] - t[0])
+            if b - a > merged:
+                return zl, zr, (a + b) // 2
+        return zl, zr, None
 
     def reel_tick(self, frame, mouse):
-        clusters = self.detect_bar(frame)
-        zl, zr, cx = self.interpret_bar(clusters)
+        outline, glyphs = self.detect_bar(frame)
+        zl, zr, cx = self.interpret_bar(outline, glyphs)
 
         if zl is None and cx is None:
             self.bar_misses += 1
@@ -716,7 +885,10 @@ def run_live():
                         fish = (scan_pond(cap, geom)
                                 if (cfg["aim"] or cfg["rebait"]) else None)
                         swapped = False
-                        if cfg["rebait"] and cfg["autobait"] and fish:
+                        # re-baiting is about fish getting fished out, so it
+                        # only makes sense once we have actually fished here
+                        if (cfg["rebait"] and cfg["autobait"] and fish
+                                and cast_start > 0):
                             better = bot.better_bait(fish, cfg["rebait_min"])
                             if better:
                                 swapped = switch_bait(bot, cap, mouse,
@@ -744,14 +916,20 @@ def run_live():
                     else:
                         bot.panel_gone = 0
                         if not bot.panel_started:
+                            bot.rejected_baits = set()   # new fishing point
+                            bot.wanted_bait = bot.read_equipped_bait(frame)
                             panel_fish = bot.read_fish_present(frame, fish_refs)
                             log("fish present: "
                                 + ", ".join(f"{n}->{b}"
-                                            for n, b, _ in panel_fish), 1)
+                                            + ("" if s <= FISH_MATCH_MAX else "?")
+                                            for n, b, s in panel_fish), 1)
                             want = bot.choose_bait(panel_fish)
                             log(f"recommended bait: {want}", 0)
-                            bot.wanted_bait = want
-                            if want and cfg["autobait"]:
+                            if (want and cfg["autobait"]
+                                    and want != bot.wanted_bait):
+                                # select_bait overwrites wanted_bait only if
+                                # it really selected it, so a refusal leaves
+                                # the bait we read off the panel standing
                                 select_bait(bot, cap, mouse,
                                             (left, top, w, h), want)
                                 frame = cap.grab(left, top, w, h)
@@ -795,8 +973,11 @@ def select_bait(bot, cap, mouse, geom, want, opener="panel"):
         log("bait dialog did not open; leaving bait unchanged", 0)
         return False
 
-    card, already = bot.find_bait_card(frame, want)
+    card = bot.find_bait_card(frame, want)
     if card is None:
+        # the dialog lists only what this water body accepts, and that does
+        # not change while we fish it: never ask for this bait again here
+        bot.rejected_baits.add(want)
         log(f"bait '{want}' not offered in this water body; keeping current", 0)
         cancel = bot.find_menu_button(frame, "cancel")
         if cancel:
@@ -804,13 +985,13 @@ def select_bait(bot, cap, mouse, geom, want, opener="panel"):
             time.sleep(0.8)
         return False
 
-    if already:
-        log(f"bait '{want}' already selected", 1)
-    else:
-        log(f"selecting bait '{want}' at {card}", 1)
-        mouse.click_at(left + card[0], top + card[1])
-        time.sleep(0.5)
-        frame = grab()
+    # clicking the card is a no-op when it is already the selected one, and
+    # the selected state cannot be read off the card reliably (the keyboard
+    # focus frame is brighter than the selection glow)
+    log(f"selecting bait '{want}' at {card}", 1)
+    mouse.click_at(left + card[0], top + card[1])
+    time.sleep(0.5)
+    frame = grab()
 
     confirm = bot.find_menu_button(frame, "confirm")
     if confirm is None:
@@ -848,19 +1029,40 @@ def scan_pond(cap, geom):
 
 def switch_bait(bot, cap, mouse, geom, new_bait):
     """Swap bait without leaving fishing mode (RMB opens Select Bait)."""
-    log(f"no '{bot.wanted_bait}' fish left; switching to '{new_bait}'", 0)
+    cur = bot.wanted_bait or "an unrecognised bait"
+    log(f"no fish left for {cur}; switching to '{new_bait}'", 0)
     return select_bait(bot, cap, mouse, geom, new_bait, opener="rmb")
 
 
-def aim_and_cast(bot, cap, mouse, geom, cfg, want_bait, fish=None):
-    """Steer the landing reticle onto a fish, then cast.
+def world_shift(prev, cur):
+    """How far the scene slid between two grabs, in screen px -> (dx, dy).
 
-    Falls back to an open-loop cast whenever the pond scan or the reticle
-    detector comes up empty, so a failed aim never blocks fishing.
+    Phase correlation over the whole view, which is dominated by water and
+    terrain, so it measures camera rotation directly. Much steadier than
+    tracking any single feature, and it needs nothing to be detected.
     """
+    (sx, sy), _ = cv2.phaseCorrelate(prev, cur)
+    return sx * 2.0, sy * 2.0
+
+
+def _aim_frame(cap, geom):
     left, top, w, h = geom
+    g = cv2.cvtColor(cap.grab(left, top, w, h)[150:850, 300:1650],
+                     cv2.COLOR_BGR2GRAY).astype(np.float32)
+    return cv2.resize(g, None, fx=0.5, fy=0.5)
+
+
+def aim_and_cast(bot, cap, mouse, geom, cfg, want_bait, fish=None):
+    """Turn the camera until a fish sits under the cast, then cast.
+
+    The landing ring cannot be steered across the screen - it stays a fixed
+    distance ahead of the camera - so aiming means turning until the fish
+    arrives at it. Charging while aiming is what broke the previous version:
+    the cast kept growing for the whole aim window and ended up landing on
+    the far bank, which the game marks invalid (the ring turns red).
+    """
     try:
-        from tools.aim_cast import find_reticle, send_relative
+        from tools.aim_cast import send_relative
     except Exception as e:                                   # pragma: no cover
         log(f"aim tools unavailable ({e}); casting open-loop", 0)
         mouse.cast(cfg["cast_hold"])
@@ -873,49 +1075,48 @@ def aim_and_cast(bot, cap, mouse, geom, cfg, want_bait, fish=None):
         mouse.cast(cfg["cast_hold"])
         return
 
-    # prefer a fish the chosen bait actually catches, else the biggest
+    # prefer a fish the chosen bait actually catches, else the likeliest
     match = [f for f in fish if want_bait and f.get("bait") == want_bait]
     target = (match or fish)[0]
+    fish_x = float(target["x"])
     log(f"aiming at {target['family']} at ({target['x']},{target['y']})"
         f"{' [bait match]' if match else ''}", 1)
 
-    mouse.hold()
+    aim_x, tol = cfg["aim_x"], cfg["aim_tolerance"]
     deadline = time.monotonic() + cfg["aim_timeout"]
-    gain_x = gain_y = None
-    prev = None
-    aligned = False
-    try:
-        while time.monotonic() < deadline:
-            pos = find_reticle(cap.grab(left, top, w, h))
-            if pos is None:
-                time.sleep(0.2)
+    prev = _aim_frame(cap, geom)
+    gain = None            # screen px of world travel per mouse unit
+    probe = 200
+    outcome = "timed out"
+    while time.monotonic() < deadline:
+        err = aim_x - fish_x           # how far the fish must still travel
+        if abs(err) <= tol:
+            outcome = "aimed"
+            break
+        sent = int(math.copysign(probe, -err) if gain is None
+                   else max(-3000, min(3000, err / gain)))
+        if sent == 0:
+            outcome = "aimed"          # inside one mouse unit of the target
+            break
+        send_relative(sent, 0)
+        time.sleep(0.15)
+        cur = _aim_frame(cap, geom)
+        sx, _ = world_shift(prev, cur)
+        prev = cur
+        fish_x += sx                   # the fish rides the world
+        if abs(sx) < 4:
+            # the camera did not move: push harder before giving up
+            if gain is None and probe < 3200:
+                probe *= 2
                 continue
-            dx, dy = target["x"] - pos[0], target["y"] - pos[1]
-            dist = max((dx * dx + dy * dy) ** 0.5, 1.0)
-            # land short of the fish: dropping on top of it scares it away
-            keep = 1 - min(cfg["aim_offset"], dist) / dist
-            err_x, err_y = dx * keep, dy * keep
-            if abs(err_x) <= 26 and abs(err_y) <= 26:
-                aligned = True
-                break
-            if gain_x is None:
-                if prev is None:
-                    prev = pos
-                    send_relative(60, 30)
-                    time.sleep(0.2)
-                    continue
-                mvx, mvy = pos[0] - prev[0], pos[1] - prev[1]
-                gain_x = 60 / mvx if abs(mvx) > 4 else 1.0
-                gain_y = 30 / mvy if abs(mvy) > 4 else gain_x
-                gain_x = max(-8.0, min(8.0, gain_x))
-                gain_y = max(-8.0, min(8.0, gain_y))
-                log(f"aim gain=({gain_x:.2f},{gain_y:.2f})", 2)
-            send_relative(int(max(-220, min(220, err_x * gain_x * 0.8))),
-                          int(max(-220, min(220, err_y * gain_y * 0.8))))
-            time.sleep(0.18)
-        log("aim aligned" if aligned else "aim timed out, casting anyway", 1)
-    finally:
-        mouse.release()
+            outcome = f"camera ignores injected motion (last probe {sent})"
+            break
+        g = sx / sent
+        gain = g if gain is None else 0.5 * gain + 0.5 * g
+        log(f"aim: world {sx:+.0f}px for {sent:+.0f} units, "
+            f"gain={gain:.3f}, fish now x={fish_x:.0f}", 2)
+    log(f"aim {outcome} (fish x={fish_x:.0f}, want {aim_x})", 1)
+    mouse.cast(cfg["cast_hold"])
 
 
 def quit_hotkey_pressed():
@@ -960,8 +1161,12 @@ def read_config():
         "rebait": bool(get("autocast", "rebait", 1)),
         "rebait_min": get("autocast", "rebait_min_fish", 2),
         "aim": bool(get("autocast", "aim", 1)),
-        "aim_offset": get("autocast", "aim_offset_px", 110),
-        "aim_timeout": get("autocast", "aim_timeout_s", 8),
+        # screen x the cast lands on: the landing ring sits at a fixed spot
+        # ahead of the camera (measured 984..1007 across every session), so
+        # aiming means turning until the fish reaches it
+        "aim_x": get("autocast", "aim_x_px", 995),
+        "aim_tolerance": get("autocast", "aim_tolerance_px", 45),
+        "aim_timeout": get("autocast", "aim_timeout_s", 6),
     }
 
 
@@ -1002,8 +1207,8 @@ def run_test(frames_dir):
     for f in files:
         frame = cv2.imread(f)
         bot.get_state(frame)
-        clusters = bot.detect_bar(frame)
-        zl, zr, cx = bot.interpret_bar(clusters)
+        outline, glyphs = bot.detect_bar(frame)
+        zl, zr, cx = bot.interpret_bar(outline, glyphs)
         if zl is not None:
             stats["zone"] += 1
         if cx is not None:
